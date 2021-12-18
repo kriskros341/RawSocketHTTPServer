@@ -12,8 +12,6 @@
 #include <unistd.h>
 // better error handling with gai
 #include <netdb.h>
-#define BACKLOG 10 // how many pending connections queue will hold
-#define MYPORT "80" // the port users will be connecting to
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -25,6 +23,9 @@
 #include <fstream>
 #include <sstream>
 
+#define BACKLOG 10 // how many pending connections queue will hold
+#define MYPORT "80" // the port users will be connecting to
+#define DEFAULTSRC = "/"
 using namespace std;
 
 int getaddrinfo(
@@ -110,10 +111,14 @@ string getMimeType(string filename) {
 		mimetype_map["default"];
 };
 
+
+
+
+
 class Server {
 	public:
 		int serverSocketFileDescriptor, foreignSocketFileDescriptor;
-		int port = MYPORT;
+		string port = MYPORT;
 		struct addrinfo hints, *servinfo, *p;
 		struct sockaddr_storage their_addr;
 		socklen_t sin_size;
@@ -121,7 +126,7 @@ class Server {
 		char s[INET6_ADDRSTRLEN];
 		int rv;
 		void bindToLocalAddress() {
-			if((rv = getaddrinfo(NULL, this->port, &hints, &servinfo)) != 0) {
+			if((rv = getaddrinfo(NULL, this->port.c_str(), &hints, &servinfo)) != 0) {
 				fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv)); 
 			}
 			for(p = servinfo; p != NULL; p = p->ai_next) {
@@ -226,7 +231,7 @@ class Server {
 			hints.ai_flags = AI_PASSIVE;  //Do not initiate connection.
 			memset(&hints, 0, sizeof hints);
 			bindToLocalAddress();
-			printf("server: waiting for connections to %s...\n", this->port);
+			printf("server: waiting for connections to %s...\n", this->port.c_str());
 		}		
 };
 
@@ -234,9 +239,10 @@ class Server {
 
 int main(int argc, char *argv[]) {
 	initializeMimeMap();
+	cout << __cplusplus << endl;
 	Server s;
-	s.port = 80;
-	//s.on("GET", path, function)
+	s.port = "80";
+	//s.on("GET", function)
 	s.mainLoop();
 	// s.on("POST").add({})
 	return 0;
