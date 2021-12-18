@@ -1,7 +1,7 @@
-
 #include <stdio.h>
 #include <iostream>
 #include <string.h>
+#include <map>
 #include "stdint.h"
 
 // a header with inet functions
@@ -12,7 +12,8 @@
 #include <unistd.h>
 // better error handling with gai
 #include <netdb.h>
-
+#define BACKLOG 10 // how many pending connections queue will hold
+#define MYPORT "80" // the port users will be connecting to
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -33,8 +34,6 @@ int getaddrinfo(
 		struct addrinfo **res
 		);
 
-#define BACKLOG 10 // how many pending connections queue will hold
-#define MYPORT "3490" // the port users will be connecting to
 
 // get sockaddr, but protocol agnostic
 void *get_in_addr(struct sockaddr *sa) {
@@ -50,24 +49,71 @@ int yes = 1;
 // a fast way to check if a file with given path exists.
 bool exists (string &filename) {
   struct stat buffer;   
-  return (stat (filename.c_str(), &buffer) == 0); 
+	return (stat (filename.c_str(), &buffer) == 0);
 }
 
-int loadFile(string path, string &result) {
-	if(!exists(path)) {
-		return -1; //fail
-	};
+//Populates content string with the file content
+int loadFile(string path, string &content) {
 	ifstream theFile; //ifstream read, ofstream write
 	stringstream buff;
 	theFile.open(path.c_str()); // PÓŁ GODZINY ZAPOMNIAŁEM ŻE TRZEBA OTWORZYĆ PLIK WTF
 	buff << theFile.rdbuf();
-	result = buff.str();
+	content = buff.str();
 	return 0; //success
 }
+
+//Checks path. 
+//if it's a folder increments path by index.html and checks for it, 
+//if it's not then it populates content string with file's data.
+bool isThereSuchFile(string &path, string &content) {
+  struct stat buffer;
+	if(stat (path.c_str(), &buffer) == 0) {
+		if(buffer.st_mode & S_IFDIR) {
+			//handle dir
+			if(path.back() == '/') {
+				path += "index.html";
+			} else {
+				path += "/index.html";
+			}
+			return isThereSuchFile(path, content);
+		}
+		else if(buffer.st_mode & S_IFREG) {
+			//handle a file
+			loadFile(path, content);
+			return true;
+		}
+		else {
+			//handle other
+			return false;
+		}
+	};
+	return false;
+}
+
+map<string, string> mimetype_map;
+
+void initializeMimeMap() {
+	mimetype_map["default"] = "text/html";
+	mimetype_map["html"] = "text/html";
+	mimetype_map["css"] = "text/css";
+	mimetype_map["js"] = "text/js";
+	mimetype_map["jpeg"] = "image/jpeg";
+	mimetype_map["png"] = "image/png";
+}
+
+//Gets the MIME type of specified resource
+string getMimeType(string filename) {
+	string extension = filename.substr(filename.find('.')+1);
+	return strlen(mimetype_map[extension].c_str()) != 0 ? 
+		mimetype_map[extension] 
+		: 
+		mimetype_map["default"];
+};
 
 class Server {
 	public:
 		int serverSocketFileDescriptor, foreignSocketFileDescriptor;
+		int port = MYPORT;
 		struct addrinfo hints, *servinfo, *p;
 		struct sockaddr_storage their_addr;
 		socklen_t sin_size;
@@ -75,7 +121,7 @@ class Server {
 		char s[INET6_ADDRSTRLEN];
 		int rv;
 		void bindToLocalAddress() {
-			if((rv = getaddrinfo(NULL, MYPORT, &hints, &servinfo)) != 0) {
+			if((rv = getaddrinfo(NULL, this->port, &hints, &servinfo)) != 0) {
 				fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv)); 
 			}
 			for(p = servinfo; p != NULL; p = p->ai_next) {
@@ -127,8 +173,9 @@ class Server {
 
 					string request;
 					char buff[8096];
-					int r;		
+					int r;
 					if((r = read(foreignSocketFileDescriptor, buff, 8096)) > 0) {
+						//TO IMPROVE
 						if(r == -1) {
 							perror("read");
 							break;
@@ -138,7 +185,6 @@ class Server {
 					int methodEndsAt = request.find(' ');
 					string method = request.substr(0, methodEndsAt);
 					string path = request.substr(methodEndsAt+1, request.substr(methodEndsAt+1).find(' ')); // PATH;
-					cout << path << endl;
 					if(method == "GET") {
 						//prepareGetResponse
 						string resp;
@@ -146,16 +192,20 @@ class Server {
 						if(path == "/") {
 							path = "index.html";
 						}
-						if(loadFile(path.substr(1), fileContent) == -1) {
-							resp = "HTTP/1.1 404 Not Found\r\n\r\n <div>404 Not Found</div>";
+						if(path.at(0) == '/') {
+							path = path.substr(1);
 						}
-						else {
+						if(isThereSuchFile(path, fileContent)) {
+							string mimetype = getMimeType(path);
 							resp = 
 								"HTTP/1.1 200 OK\r\n"
 								"Server: MyServer!\r\n"
 								"Connection: Close\r\n"
-								"Content-Type: text/html\r\n"
+								"Content-Type: "+mimetype+"\r\n"
 								"\r\n" + fileContent;
+						}
+						else {
+							resp = "HTTP/1.1 404 Not Found\r\n\r\n <div>404 Not Found</div>";
 						}
 						int respsize = resp.length();
 						if(send(foreignSocketFileDescriptor, resp.c_str(), respsize, 0) == -1) {
@@ -176,14 +226,17 @@ class Server {
 			hints.ai_flags = AI_PASSIVE;  //Do not initiate connection.
 			memset(&hints, 0, sizeof hints);
 			bindToLocalAddress();
-			printf("server: waiting for connections to %s...\n", MYPORT);
+			printf("server: waiting for connections to %s...\n", this->port);
 		}		
 };
 
 
 
 int main(int argc, char *argv[]) {
+	initializeMimeMap();
 	Server s;
+	s.port = 80;
+	//s.on("GET", path, function)
 	s.mainLoop();
 	// s.on("POST").add({})
 	return 0;
