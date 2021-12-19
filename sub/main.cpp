@@ -1,55 +1,36 @@
 #include <stdio.h>
 #include <iostream>
-#include "stdint.h"
-
-#include <dirent.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-
-#include <regex>
 #include <string.h>
 #include <map>
 #include <vector>
+#include "stdint.h"
+#include <dirent.h>
+// a header with inet functions
+#include <sys/types.h>
+#include <sys/socket.h>
 
-#include <fstream>
-#include <sstream>
+#include <regex>
+//close() filedescriptor fn is in
 #include <unistd.h>
-
+// better error handling with gai
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <sys/wait.h>
+//pre termination cleanup;
+#include <signal.h>
+#include "sys/stat.h"
+//handling files
+#include <fstream>
+#include <sstream>
 #define IGNORE_CHAR '.'
 #define HTTP_BADREQUEST "HTTP/1.1 400 Bad Request\r\n\r\n <div>400 Bad Request</div>"
 #define HTTP_NOTFOUND "HTTP/1.1 404 Not Found\r\n\r\n <div>404 Not Found</div>"
 #define BACKLOG 10 // how many pending connections queue will hold
 #define MYPORT "80" // the port users will be connecting to
-
-
-using std::string;
-using std::map;
-using std::regex;
-int yes = 1; //It's needed. Trust me.
-
-
-int getaddrinfo(
-	const char *node, // e.g. "www.example.com" or IP
-	const char *service, // e.g. "http" or port number
-	const struct addrinfo *hints,
-	struct addrinfo **res
-);
-
-
-// get sockaddr, but protocol agnostic
-void *get_in_addr(struct sockaddr *sa) {
-	if(sa->sa_family == AF_INET) {
-		//handle ipv4
-		return &(((struct sockaddr_in*)sa)->sin_addr);
-	}
-	//handle ipv6
-	return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}
+#define DEFAULTSRC "/"
+using namespace std;
 
 
 enum class Method {
@@ -60,6 +41,33 @@ enum class Method {
 	HEAD = 5,
 };
 
+struct requestModel {
+	Method method;
+	string proto;
+	string path;
+	string path_params;
+	map<string, string> headers;
+	string body;
+};
+
+int getaddrinfo(
+		const char *node, // e.g. "www.example.com" or IP
+		const char *service, // e.g. "http" or port number
+		const struct addrinfo *hints,
+		struct addrinfo **res
+		);
+
+
+// get sockaddr, but protocol agnostic
+void *get_in_addr(struct sockaddr *sa) {
+	if(sa->sa_family == AF_INET) {
+		//check if is ipv4
+		return &(((struct sockaddr_in*)sa)->sin_addr);
+	}
+	return &(((struct sockaddr_in6*)sa)->sin6_addr);
+}
+
+int yes = 1;
 
 Method parseMethod(string method) {
 	if(method == "GET") {
@@ -76,7 +84,6 @@ Method parseMethod(string method) {
 		return Method::HEAD;
 	}
 }
-
 
 string parseMethod(Method method) {
 	string m;
@@ -101,6 +108,50 @@ string parseMethod(Method method) {
 	};
 	return m;
 };
+
+// a fast way to check if a file with given path exists.
+
+//Populates content string with the file content
+int loadFile(string path, string &content) {
+	ifstream theFile; //ifstream read, ofstream write
+	stringstream buff;
+	theFile.open(path.c_str()); // PÓŁ GODZINY NIE DZIALALO ZAPOMNIAŁEM ŻE TRZEBA OTWORZYĆ PLIK WTF
+	if(theFile.good()) {
+		buff << theFile.rdbuf();
+		content = buff.str();
+		return 0; //success
+	}
+	return -1;
+}
+
+
+//Checks path. 
+//if it's a folder increments path by index.html and checks for it, 
+//if it's not then it populates content string with file's data.
+bool isThereSuchFile(string &path, string &content) {
+  struct stat buffer;
+	if(stat (path.c_str(), &buffer) == 0) {
+		if(buffer.st_mode & S_IFDIR) {
+			//handle dir
+			if(path.back() == '/') {
+				path += "index.html";
+			} else {
+				path += "/index.html";
+			}
+			return isThereSuchFile(path, content);
+		}
+		else if(buffer.st_mode & S_IFREG) {
+			//handle a file
+			loadFile(path, content);
+			return true;
+		}
+		else {
+			//handle other
+			return false;
+		}
+	};
+	return false;
+}
 
 
 map<string, string> mimetype_map;
@@ -143,6 +194,7 @@ void translatePath(string &path) {
 		return;
 	}
 	if(path == "/") {
+		cout << "e" << endl;
 		if(exists("index.html")) {
 			path = "index.html";
 			return;
@@ -164,14 +216,8 @@ void translatePath(string &path) {
 };
 
 
-struct requestModel {
-	Method method;
-	string proto;
-	string path;
-	string path_params;
-	map<string, string> headers;
-	string body;
-};
+
+
 
 
 //https://regexr.com/
@@ -180,7 +226,7 @@ int parseRequest(string request, requestModel &result) {
 	regex firstLineR = regex(R"(^(.*)\S)");
 	regex headersR = regex(R"([A-Z].*: (.*)\S)");
 	regex bodyR = regex(R"((.&)$)");
-	std::smatch firstLineM;
+	smatch firstLineM;
 	if(!regex_search(request, firstLineM, firstLineR)) {
 		return -1;
 	}
@@ -195,21 +241,25 @@ int parseRequest(string request, requestModel &result) {
 	translatePath(path);
 	string path_params = fullPath.substr(fullPath.find("?")+1);
 
-	string proto = firstLine.substr(methodEndsAt + 1 + pathEndsAt + 1); 
-	// cumulated offset
-	auto headers_begin = std::sregex_iterator(request.begin(), request.end(), headersR);
+	string proto = firstLine.substr(methodEndsAt + 1 + pathEndsAt + 1); // cumulated offset
+	
+	
+	auto headers_begin = sregex_iterator(request.begin(), request.end(), headersR);
 	auto headers_end = std::sregex_iterator();
 	int length = distance(headers_begin, headers_end);
+	//cout << "items: " << length << endl;
 	string lastHeader;
-	for(std::sregex_iterator i = headers_begin; i != headers_end; i++) {
-		lastHeader = (*i).str();
-		int colonIndex = lastHeader.find(":");
-		headers[lastHeader.substr(0, colonIndex)] = lastHeader.substr(colonIndex+1);
+	for(sregex_iterator i = headers_end; i != headers_end; i++) {
+		string h = (*i).str();
+		int colonIndex = h.find(":");
+		lastHeader = h;
+		headers[h.substr(0, colonIndex)] = h.substr(colonIndex+1);
+		//cout << h.substr(0, colonIndex) << "---" << h.substr(colonIndex+2) << endl;
 	}
 	string body;
-	std::smatch bodyM;
+	smatch bodyM;
 	regex_search(request, bodyM, bodyR);
-	if(!(bodyM.str() == lastHeader)) { //I'm that lazy
+	if(!(bodyM.str() == lastHeader)) {
 		body = bodyM.str();
 	}
 
@@ -223,82 +273,39 @@ int parseRequest(string request, requestModel &result) {
 }
 
 
-// Populates content string with the file content
-int loadFile(string path, string &content) {
-	std::ifstream theFile; //ifstream read, ofstream write
-	std::stringstream buff;
-	theFile.open(path.c_str()); 
-	// PÓŁ GODZINY NIE DZIALALO ZAPOMNIAŁEM ŻE TRZEBA OTWORZYĆ PLIK WTF
-	if(theFile.good()) {
-		buff << theFile.rdbuf();
-		content = buff.str();
-		return 0; //success
-	}
-	return -1; //failure
-}
-
-
-//Checks path.
-//if it's a folder increments path by index.html and checks for it, 
-//if it's not then it populates content string with file's data.
-bool isThereSuchFile(string &path, string &content) {
-  struct stat buffer;
-	if(stat (path.c_str(), &buffer) == 0) {
-		if(buffer.st_mode & S_IFDIR) {
-			//handle dir
-			if(path.back() == '/') {
-				path += "index.html";
-			} else {
-				path += "/index.html";
-			}
-			return isThereSuchFile(path, content);
-		}
-		else if(buffer.st_mode & S_IFREG) {
-			//handle a file
-			loadFile(path, content);
-			return true;
-		}
-		else {
-			//handle other
-			return false;
-		}
-	};
-	return false;
-}
-
-
-class SocketServer {
-	// Pure socket setup, 0 implementation in diet.
+class Server {
 	public:
 		int serverSocketFileDescriptor, foreignSocketFileDescriptor;
-		socklen_t sin_size;
-		std::string port = MYPORT;
+		string port = MYPORT;
 		struct addrinfo hints, *servinfo, *p;
 		struct sockaddr_storage their_addr;
+		socklen_t sin_size;
+		struct sigaction sa;
 		char s[INET6_ADDRSTRLEN];
-		
-		virtual void handleIncomingData(std::string incomingData) {};
-		//The stuff that is being done on every request
-		
-		virtual void bindToLocalAddress();
-		void setup();
-		//even more setup
+		string directory = DEFAULTSRC;
+		map<Method, map<string, string (*)(requestModel request)>> endpoints;
+
+
+		static string GETFileHandler(requestModel request);
+		void createGetFileEndpoint(string path);
+		void getEndpointsFromDirectory(string pathToDirectory);
+		void bindToLocalAddress();
+		void on(Method method, string path, string (*)(requestModel request));
 		int mainLoop();
-		SocketServer() {};
+		Server() {
+			//setup
+			hints.ai_family = AF_UNSPEC; //Accept both IPV4 and IPV6
+			hints.ai_socktype = SOCK_STREAM; //Accept TCP
+			hints.ai_flags = AI_PASSIVE;  //Do not initiate connection.
+			memset(&hints, 0, sizeof hints);
+			bindToLocalAddress();
+			printf("server: waiting for connections to %s...\n", this->port.c_str());
+		}		
 };
 
 
-void SocketServer::setup() {
-	hints.ai_family = AF_UNSPEC; //Accept both IPV4 and IPV6
-	hints.ai_socktype = SOCK_STREAM; //Accept TCP
-	hints.ai_flags = AI_PASSIVE;  //Do not initiate connection.
-	memset(&hints, 0, sizeof hints);
-	bindToLocalAddress();
-	printf("server: waiting for connections to %s...\n", this->port.c_str());
-}
 
-
-int SocketServer::mainLoop() {
+int Server::mainLoop() {
 	if(listen(serverSocketFileDescriptor, foreignSocketFileDescriptor) == -1) {
 		perror("listen");
 		exit(1);
@@ -307,7 +314,8 @@ int SocketServer::mainLoop() {
 		sin_size = sizeof their_addr;
 		foreignSocketFileDescriptor = accept(serverSocketFileDescriptor, (struct sockaddr *)&their_addr, &sin_size);
 		if(!fork()) {
-			std::string incomingData;
+			string resp;
+			string request_string;
 			char buff[8096];
 			int bytesRead;
 			if(foreignSocketFileDescriptor == -1) {
@@ -321,18 +329,76 @@ int SocketServer::mainLoop() {
 				if(bytesRead == -1) {
 					perror("read");
 				}
-				incomingData += buff;
+				request_string += buff;
 			}
-			handleIncomingData(incomingData);
+			struct requestModel request;
+			if(parseRequest(request_string, request) == -1) {
+				//REDUCE THE AMOUNT OF ENDPOINTS PLZ
+				resp = HTTP_BADREQUEST;
+				if(send(foreignSocketFileDescriptor, resp.c_str(), resp.size(), 0) == -1) {
+					perror("send");
+				};
+				continue;
+			};
+			
+			if(endpoints[request.method][request.path] != 0) {
+				resp = endpoints[request.method][request.path](request);
+			} else {
+				resp = HTTP_NOTFOUND;
+			}
+			if(send(foreignSocketFileDescriptor, resp.c_str(), resp.size(), 0) == -1) {
+				perror("send");
+			};
 		}
 		close(foreignSocketFileDescriptor); // done using it
 	}
 	close(serverSocketFileDescriptor); // no need to listen anymore
 	return 0;
-};
+}
 
 
-void SocketServer::bindToLocalAddress() {
+string Server::GETFileHandler(requestModel request) {
+	string response;
+	string fileContent;
+	translatePath(request.path);
+	string mimetype = getMimeType(request.path);
+	if(loadFile(request.path, fileContent) == 0) {
+		response = 
+			"HTTP/1.1 200 OK\r\n"
+			"Server: MyServer!\r\n"
+			"Connection: Kepp-Alive\r\n"
+			"Content-Type: "+mimetype+"\r\n"
+			"\r\n" + fileContent;
+		return response;
+	};
+	return HTTP_NOTFOUND;
+}
+
+/*
+Old version that checks endpoints itself
+string Server::GETFileHandler(string request) {
+	string resp;
+	string fileContent;
+	int methodEndsAt = request.find(' ');
+	string method = request.substr(0, methodEndsAt);
+	string path = request.substr(methodEndsAt+1, request.substr(methodEndsAt+1).find(' ')); // PATH;
+	if(isThereSuchFile(path, fileContent)) {
+		string mimetype = getMimeType(path);
+		resp = 
+			"HTTP/1.1 200 OK\r\n"
+			"Server: MyServer!\r\n"
+			"Connection: Close\r\n"
+			"Content-Type: "+mimetype+"\r\n"
+			"\r\n" + fileContent;
+	}
+	else {
+		resp = HTTP_NOTFOUND;
+	}
+	return resp;
+}
+*/
+
+void Server::bindToLocalAddress() {
 	int addrinfoStatus;
 	if((addrinfoStatus = getaddrinfo(NULL, this->port.c_str(), &hints, &servinfo)) != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(addrinfoStatus)); 
@@ -365,62 +431,8 @@ void SocketServer::bindToLocalAddress() {
 	}
 }
 
-
-class Server: public SocketServer {
-	public:
-		map<Method, map<string, string (*)(requestModel request)>> endpoints;
-
-		static string GETFileHandler(requestModel request);
-		void createGetFileEndpoint(string path);
-		void getEndpointsFromDirectory(string pathToDirectory);
-		void on(Method method, string path, string (*)(requestModel request));
-		void handleIncomingData(string incomingData) override;
-		Server() {
-			//setup
-			setup();
-		}		
-};
-
-
-void Server::handleIncomingData(std::string incomingData) {
-	string resp;
-	struct requestModel request;
-	if(parseRequest(incomingData, request) == -1) {
-		//REDUCE THE AMOUNT OF ENDPOINTS PLZ
-		resp = HTTP_BADREQUEST;
-		if(send(foreignSocketFileDescriptor, resp.c_str(), resp.size(), 0) == -1) {
-			perror("send");
-			return;
-		};
-	};
-	if(endpoints[request.method][request.path] != 0) {
-		resp = endpoints[request.method][request.path](request);
-	} else {
-		resp = HTTP_NOTFOUND;
-	}
-	if(send(foreignSocketFileDescriptor, resp.c_str(), resp.size(), 0) == -1) {
-		perror("send");
-	};
+void handleFile() {
 }
-
-
-string Server::GETFileHandler(requestModel request) {
-	string response;
-	string fileContent;
-	translatePath(request.path);
-	string mimetype = getMimeType(request.path);
-	if(loadFile(request.path, fileContent) == 0) {
-		response = 
-			"HTTP/1.1 200 OK\r\n"
-			"Server: MyServer!\r\n"
-			"Connection: Kepp-Alive\r\n"
-			"Content-Type: "+mimetype+"\r\n"
-			"\r\n" + fileContent;
-		return response;
-	};
-	return HTTP_NOTFOUND;
-}
-
 
 string getFilenameFromPath(string path) {
 	int len = strlen(path.c_str());
@@ -440,10 +452,15 @@ string getFilenameFromPath(string path) {
 }
 
 
+
 void Server::createGetFileEndpoint(string path) {
 	translatePath(path);
-	std::cout << "initializing GET endpoint " << path << std::endl;
+	cout << "initializing GET endpoint " << path << endl;
 	endpoints[Method::GET][path] = GETFileHandler;
+	//cout << endpoints[Method::GET][path](path) << endl;
+	/*
+		endpoints[path](path)
+	*/
 }
 
 
@@ -480,31 +497,32 @@ void Server::getEndpointsFromDirectory(string path) {
 	//Such item doesn't exist
 }
 
+typedef string (*Handler)(requestModel request);
 
-typedef string (*handlerFunction)(requestModel request);
 
 
-void Server::on(Method method, string path, handlerFunction handler){
+
+void Server::on(Method method, string path, Handler handler){
 	string m = parseMethod(method);
-	std::cout << "initializing " << m << " endpoint " << path.substr(1) << std::endl;
+	cout << "initializing" << m << " endpoint " << path.substr(1) << endl;
 	endpoints[method][path.substr(1)] = handler;
 };
 
-
-string endpointFunction(requestModel request) {
-	std::cout << "testing the endpoint" << std::endl;
+string testEndpoint(requestModel request) {
+	cout << "testing the endpoint" << endl;
 	return "a";
 };
-
 
 int main(int argc, char *argv[]) {
 	initializeMimeMap();
 	//cout << __cplusplus << endl; //14
 	Server s;
 	s.getEndpointsFromDirectory(".");
-	s.on(Method::POST, "/endpoint", endpointFunction);
-	//s.on(METHOD, "PATH", functionHandler)
+	s.on(Method::POST, "/endpoint", testEndpoint);
+	//s.on("GET", "PATH", function)
+	//s.includeDirectory("Path")
 	s.mainLoop();
+	// s.on("POST").add({})
 	return 0;
 };
 
