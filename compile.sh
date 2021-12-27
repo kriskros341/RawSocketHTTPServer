@@ -1,1 +1,1 @@
-gcc main.cpp -lstdc++ -lm -o executable
+gcc main.cpp -g -lstdc++ -lpqxx -lm -o executable

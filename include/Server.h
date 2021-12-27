@@ -105,21 +105,34 @@ class SocketServer {
 		SocketServer() {};
 };
 
-typedef responseModel (*handlerFunction)(requestModel request);
+template <typename Context>
+using handlerFunction = std::function<responseModel(requestModel, Context)>;
+typedef string pathString;
 
+
+template <typename Context>
 class Server: public SocketServer {
-	private:
-		std::map<Method, map<string, responseModel (*)(requestModel request)>> endpoints;
-
 	public:
+		Context context;
+		std::map<Method, std::map<pathString, handlerFunction<Context>>> endpoints;
 
-	static responseModel GETFileHandler(requestModel request);
-	void createGetFileEndpoint(string path);
-	void getEndpointsFromDirectory(string pathToDirectory);
-	void on(Method method, string path, responseModel (*)(requestModel request));
-	void handleIncomingData(string incomingData) override;
-	Server() {
-		setup();
-	}
+		static responseModel GETFileHandler(requestModel request, Context context);
+		void createGetFileEndpoint(string path);
+		void getEndpointsFromDirectory(string pathToDirectory);
+		void on(Method method, string path, handlerFunction<Context>);
+		void handleIncomingData(string incomingData) override;
+		Server<Context>(Context &db) {
+			setup();
+			context = db;
+		}
 };
 
+	/*
+	 * f
+	 * pqxx::result g = s.context.query("SELECT * FROM todo");
+	for (auto const &row: g) {
+		for (auto const &field: row) {
+			std::cout << field << std::endl;
+		}
+	}
+	*/

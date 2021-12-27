@@ -305,6 +305,8 @@ void SocketServer::setup() {
 	bindToLocalAddress();
 	printf("server: waiting for connections to %d...\n", this->port);
 };
+
+
 int SocketServer::mainLoop() {
 	if(listen(serverSocketFileDescriptor, foreignSocketFileDescriptor) == -1) {
 		perror("listen");
@@ -338,7 +340,8 @@ int SocketServer::mainLoop() {
 	return 0;
 };
 
-void Server::on(Method method, string path, handlerFunction handler){
+template <typename Context>
+void Server<Context>::on(Method method, string path, handlerFunction<Context> handler){
 	string m = parseMethod(method);
 	std::cout << "initializing " << m << " endpoint " << path.substr(1) << std::endl;
 	endpoints[method][path.substr(1)] = handler;
@@ -361,7 +364,8 @@ string getFilenameFromPath(string path) {
 	return result2;
 }
 
-void Server::getEndpointsFromDirectory(string path) {
+template <typename Context>
+void Server<Context>::getEndpointsFromDirectory(string path) {
 	DIR *directory;
 	struct dirent *entry;
 	struct stat statBuffer;
@@ -395,14 +399,16 @@ void Server::getEndpointsFromDirectory(string path) {
 	//Such item doesn't exist
 }
 
-void Server::createGetFileEndpoint(string path) {
+template <typename Context>
+void Server<Context>::createGetFileEndpoint(string path) {
 	translatePath(path);
 	std::cout << "initializing GET endpoint " << path << std::endl;
-	endpoints[Method::GET][path] = GETFileHandler;
+	endpoints[Method::GET][path] = GETFileHandler; //it
 }
 
 
-responseModel Server::GETFileHandler(requestModel request) {
+template <typename Context>
+responseModel Server<Context>::GETFileHandler(requestModel request, Context context) {
 	responseModel response;
 	string fileContent;
 	translatePath(request.path);
@@ -422,7 +428,10 @@ responseModel Server::GETFileHandler(requestModel request) {
 	}
 	return response;
 }
-void Server::handleIncomingData(std::string incomingData) {
+
+
+template <typename Context>
+void Server<Context>::handleIncomingData(std::string incomingData) {
 	string resp;
 	struct requestModel request;
 	if(parseRequest(incomingData, request) == -1) {
@@ -435,7 +444,7 @@ void Server::handleIncomingData(std::string incomingData) {
 		};
 	};
 	if(endpoints[request.method][request.path] != 0) {
-		resp = endpoints[request.method][request.path](request).parse();
+		resp = endpoints[request.method][request.path](request, context).parse();
 	} else {
 		resp = HTTP_NOTFOUND;
 	}
