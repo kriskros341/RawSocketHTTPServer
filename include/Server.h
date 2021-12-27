@@ -24,6 +24,9 @@
 #define HTTP_NOTFOUND "HTTP/1.1 404 Not Found\r\n\r\n <div>404 Not Found</div>"
 
 
+
+
+
 using std::string;
 using std::map;
 int yes = 1; //It's needed. Trust me.
@@ -110,20 +113,29 @@ using handlerFunction = std::function<responseModel(requestModel, Context)>;
 typedef string pathString;
 
 
+
 template <typename Context>
 class Server: public SocketServer {
 	public:
 		Context context;
-		std::map<Method, std::map<pathString, handlerFunction<Context>>> endpoints;
+		std::map<
+			Method, 
+			std::map<
+				pathString, 
+				handlerFunction<Context> 
+			>
+		> endpoints;
 
 		static responseModel GETFileHandler(requestModel request, Context context);
 		void createGetFileEndpoint(string path);
 		void getEndpointsFromDirectory(string pathToDirectory);
-		void on(Method method, string path, handlerFunction<Context>);
+		
+		void on(Method method, pathString path, handlerFunction<Context>);
+
 		void handleIncomingData(string incomingData) override;
-		Server<Context>(Context &db) {
+		Server<Context>(Context &Extern) {
 			setup();
-			context = db;
+			context = Extern;
 		}
 };
 

@@ -25,6 +25,7 @@ string responseModel::parse() {
 	return result;
 };
 
+responseModel NOT_IMPLEMENTED = {"HTTP/1.1", 501, "Not Implemented", {}, "Not Implemented"};
 
 int getaddrinfo(
 	const char *node, // e.g. "www.example.com" or IP
@@ -346,6 +347,7 @@ void Server<Context>::on(Method method, string path, handlerFunction<Context> ha
 	std::cout << "initializing " << m << " endpoint " << path.substr(1) << std::endl;
 	endpoints[method][path.substr(1)] = handler;
 };
+
 
 string getFilenameFromPath(string path) {
 	int len = strlen(path.c_str());
