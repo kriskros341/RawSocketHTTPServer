@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
-#include <regex>
+#include <functional>
 #include <string.h>
 #include <map>
 #include <vector>
@@ -112,7 +112,7 @@ template <typename Context>
 using handlerFunction = std::function<responseModel(requestModel, Context)>;
 typedef string pathString;
 
-
+std::map<pathString, pathString> pathDictionary;
 
 template <typename Context>
 class Server: public SocketServer {
@@ -125,11 +125,12 @@ class Server: public SocketServer {
 				handlerFunction<Context> 
 			>
 		> endpoints;
-
+		std::map<pathString, std::vector<Method>> preflight;
+		// For serveDirectory(s, i) function
 		static responseModel GETFileHandler(requestModel request, Context context);
+		responseModel preflightResponse(requestModel r);
 		void createGetFileEndpoint(string path);
-		void getEndpointsFromDirectory(string pathToDirectory);
-		
+		void serveDirectory(string pathToDirectory);
 		void on(Method method, pathString path, handlerFunction<Context>);
 
 		void handleIncomingData(string incomingData) override;

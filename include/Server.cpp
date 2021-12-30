@@ -1,5 +1,6 @@
 #include "Server.h"
 #include "iostream"
+#include "regex"
 
 
 struct responseModel {
@@ -39,7 +40,7 @@ struct requestModel {
 	Method method;
 	string proto;
 	string path;
-	string path_params;
+	map<string, string> path_params;
 	map<string, string> headers;
 	string body;
 };
@@ -51,6 +52,7 @@ enum class Method {
 	PUT = 3,
 	DELETE = 4,
 	HEAD = 5,
+	OPTIONS = 6,
 };
 
 
@@ -72,6 +74,9 @@ string parseMethod(Method method) {
 		case 5:
 			m = "HEAD";
 			break;
+		case 6:
+			m = "OPTIONS";
+			break;
 		default:
 			m = "HEAD";
 	};
@@ -90,6 +95,8 @@ Method parseMethod(string method) {
 		return Method::DELETE;
 	} else if(method == "HEAD") {
 		return Method::HEAD;
+	} else if(method == "OPTIONS") {
+		return Method::OPTIONS;
 	} else {
 		return Method::HEAD;
 	}
@@ -109,7 +116,7 @@ void *get_in_addr(struct sockaddr *sa) {
 
 //Gets the MIME type of specified resource
 string getMimeType(string filename) {
-	string extension = filename.substr(filename.find('.')+1);
+	string extension = filename.substr(filename.find_last_of('.')+1);
 	return strlen(mimetype_map[extension].c_str()) != 0 ? 
 		mimetype_map[extension] 
 		: 
@@ -160,17 +167,54 @@ void initializeMimeMap() {
 	mimetype_map["default"] = "text/plain";
 	mimetype_map["html"] = "text/html";
 	mimetype_map["css"] = "text/css";
-	mimetype_map["js"] = "text/js";
+	mimetype_map["js"] = "text/javascript";
+	mimetype_map["map"] = "text/javascript";
 	mimetype_map["jpeg"] = "image/jpeg";
 	mimetype_map["png"] = "image/png";
 }
 
+map<string, string> parseParams(string fullPath) {
+	map<string, string> result;
+	std::cout << fullPath << std::endl;
+	::std::regex paramsR = ::std::regex(R"((([\w\d\=\(\)\+\~\-\.\!\*\'\%\`\ ])+))");
+	string path_params = fullPath.substr(fullPath.find("?")+1);
+	auto params_begin = std::sregex_iterator(path_params.begin(), path_params.end(), paramsR);
+	auto params_end = std::sregex_iterator();
+	//int paramsCount = distance(params_begin, params_end);
+	for(std::sregex_iterator i = params_begin; i != params_end; i++) {
+		string parameter = (*i).str();
+		std::cout << "PARAM" << parameter << std::endl;
+		string key, val;
+		int keyEndsAt;
+		std::cout << parameter.find('=') << std::endl; 
+		if(((keyEndsAt = parameter.find('=')) != -1)) {
+			key = parameter.substr(0, keyEndsAt); //until =
+			val = parameter.substr(keyEndsAt+1); //without =
+			//std::cout << "enter " << keyEndsAt << " " << parameter[parameter.find('=')] << std::endl;
+			//std::cout << "added pair " << key << " " << val << std::endl;
+		} else {
+			key = parameter;
+			val = "true";
+		};
+		result[key] = val;
+	}
+	return result;
+}
+
+map<string, string> handleParams(string fullPath) {
+	map<string, string> result;
+	if(fullPath.find("?") != -1) {
+		result = parseParams(fullPath);
+	}
+	return result;
+}
 
 int parseRequest(string request, requestModel &result) {
 	map<string, string> headers;
 	::std::regex firstLineR = ::std::regex(R"(^(.*)\S)");
 	::std::regex headersR = ::std::regex(R"([A-Z].*: (.*)\S)");
-	::std::regex bodyR = ::std::regex(R"((.&)$)");
+	::std::regex bodyR = ::std::regex(R"(.*$)");
+	
 	std::smatch firstLineM;
 	if(!regex_search(request, firstLineM, firstLineR)) {
 		return -1;
@@ -184,13 +228,13 @@ int parseRequest(string request, requestModel &result) {
 	int qindex = fullPath.find("?");
 	string path = fullPath.substr(0, fullPath.find("?"));
 	translatePath(path);
-	string path_params = fullPath.substr(fullPath.find("?")+1);
-
+	
+	map<string, string> params = handleParams(fullPath);
+	
 	string proto = firstLine.substr(methodEndsAt + 1 + pathEndsAt + 1); 
 	// cumulated offset
 	auto headers_begin = std::sregex_iterator(request.begin(), request.end(), headersR);
 	auto headers_end = std::sregex_iterator();
-	int length = distance(headers_begin, headers_end);
 	string lastHeader;
 	for(std::sregex_iterator i = headers_begin; i != headers_end; i++) {
 		lastHeader = (*i).str();
@@ -200,13 +244,13 @@ int parseRequest(string request, requestModel &result) {
 	string body;
 	std::smatch bodyM;
 	regex_search(request, bodyM, bodyR);
-	if(!(bodyM.str() == lastHeader)) { //I'm that lazy
-		body = bodyM.str();
+	string b = bodyM.str();
+	if(!(b == lastHeader)) { //I'm that lazy
+		body = b;
 	}
-
 	result.method = parseMethod(method);
 	result.path = path;
-	result.path_params = path_params;
+	result.path_params = params;
 	result.headers = headers;
 	result.proto = proto;
 	result.body = body;
@@ -342,10 +386,32 @@ int SocketServer::mainLoop() {
 };
 
 template <typename Context>
+responseModel Server<Context>::preflightResponse(requestModel req) {
+	responseModel res;
+	string methods;
+	res.proto = "HTTP/1.1";
+	res.code = 204;
+	res.status = "No Content";
+	res.headers["Access-Control-Allow-Origin"] = '*';
+	for(auto m: preflight[req.path]) {
+		methods += parseMethod(m);
+		if(m != preflight[req.path].back()) {
+			methods += ", ";
+		}
+	}
+	std::cout << methods << std::endl;
+	res.headers["Access-Control-Allow-Methods"] = methods;
+	return res;
+};
+
+
+template <typename Context>
 void Server<Context>::on(Method method, string path, handlerFunction<Context> handler){
 	string m = parseMethod(method);
+	string localPath = path.substr(1);
 	std::cout << "initializing " << m << " endpoint " << path.substr(1) << std::endl;
-	endpoints[method][path.substr(1)] = handler;
+	endpoints[method][localPath] = handler;
+	preflight[localPath].push_back(method);
 };
 
 
@@ -367,10 +433,11 @@ string getFilenameFromPath(string path) {
 }
 
 template <typename Context>
-void Server<Context>::getEndpointsFromDirectory(string path) {
+void Server<Context>::serveDirectory(string path) {
 	DIR *directory;
 	struct dirent *entry;
 	struct stat statBuffer;
+	int initial = path.length();
 	if(stat (path.c_str(), &statBuffer) == 0) {
 		if((directory = opendir(path.c_str()))) {
 			while((entry = readdir(directory))) {
@@ -382,7 +449,7 @@ void Server<Context>::getEndpointsFromDirectory(string path) {
 					// ignorujemy . i .. obecne w każdym folderze
 					// strcmp cuz compiler complains about === 
 					// Given path leads to a directory. let the fun begin ^^
-					getEndpointsFromDirectory(path+"/"+entry->d_name);
+					serveDirectory(path+"/"+entry->d_name);
 				}
 			}
 			closedir(directory);
@@ -404,6 +471,7 @@ void Server<Context>::getEndpointsFromDirectory(string path) {
 template <typename Context>
 void Server<Context>::createGetFileEndpoint(string path) {
 	translatePath(path);
+	pathDictionary[path] = path;
 	std::cout << "initializing GET endpoint " << path << std::endl;
 	endpoints[Method::GET][path] = GETFileHandler; //it
 }
@@ -415,6 +483,7 @@ responseModel Server<Context>::GETFileHandler(requestModel request, Context cont
 	string fileContent;
 	translatePath(request.path);
 	string mimetype = getMimeType(request.path);
+	std::cout << request.path << mimetype << std::endl;
 	response.proto = request.proto;
 	if(loadFile(request.path, fileContent) == 0) {
 		response.code = 200;
@@ -445,7 +514,11 @@ void Server<Context>::handleIncomingData(std::string incomingData) {
 			return;
 		};
 	};
-	if(endpoints[request.method][request.path] != 0) {
+	
+	std::cout << request.path << std::endl;
+	if(request.method == Method::OPTIONS) {
+		resp = preflightResponse(request).parse();
+	} else if(endpoints[request.method][request.path] != 0) {
 		resp = endpoints[request.method][request.path](request, context).parse();
 	} else {
 		resp = HTTP_NOTFOUND;

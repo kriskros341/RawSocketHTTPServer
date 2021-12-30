@@ -2,11 +2,13 @@
 #include "pqxx/pqxx"
 #include <functional>
 #include "include/json.hpp"
+#include <iostream>
 
 
 using std::string;
 using std::map;
 using std::regex;
+using nlohmann::json;
 
 
 class database {
@@ -47,7 +49,7 @@ class ServerWithDB: public Server<database> {
 };
 
 
-responseModel endpointFunction(requestModel request, database db) {
+responseModel getTasks(requestModel request, database db) {
 	responseModel response;
 	nlohmann::json jsonBody;
 	pqxx::result res = db.query("SELECT * FROM todo");
@@ -64,41 +66,106 @@ responseModel endpointFunction(requestModel request, database db) {
 	response.proto = "HTTP/1.1";
 	response.code = 200;
 	response.status = "OK";
+	response.headers["Access-Control-Allow-Origin"] = '*';
 	response.body = jsonBody.dump();
 	//::cout << "testing the endpoint" << std::endl;
 	return response;
 };
 
-
-class Tasks {
-	public:
-		static responseModel get(requestModel, database d) {
-			responseModel g;
-			g.proto = "HTTP/1.1";
-			g.code = 200;
-			g.status = "OK";
-			return g;
+bool isAlright(string s) {
+	if(s.length() == 0) {
+		return false;
 	}
-};
+	for(char x: s) {
+		if(not isdigit(x)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+responseModel deleteTask(requestModel request, database db) {
+	responseModel response;
+	nlohmann::json jsonBody;
+	string id = request.path_params.at("id");
+	if(isAlright(id)) {
+		pqxx::result res = db.query("DELETE FROM todo WHERE id="+id);
+	}
+	response.proto = "HTTP/1.1";
+	response.code = 200;
+	response.status = "OK";
+	response.headers["Access-Control-Allow-Origin"] = '*';
+	return response;
+}
+
+responseModel createTask(requestModel request, database db) {
+	map<string, string> body = parseParams(request.body);
+	responseModel response;
+	nlohmann::json jsonBody;
+	response.proto = "HTTP/1.1";
+	if(isAlright(body["id"]) && body["name"].length() != 0 && body["isdone"] == "false" || body["isdone"] == "true") {
+		pqxx::result res = db.query("INSERT INTO todo VALUES("+body["id"]+", \'"+body["name"]+"\', "+body["isdone"]+")");
+		response.code = 200;
+		response.status = "OK";
+		response.headers["Access-Control-Allow-Origin"] = '*';
+		return response;
+	}
+	response.code = 422;
+	response.status = "Unprocessable Entity";
+	response.headers["Access-Control-Allow-Origin"] = '*';
+	//for(std::pair<string, string> x: body) {
+	//	std::cout << x.first << "     " << x.second << std::endl;
+	//}
+	//::cout << "testing the endpoint" << std::endl;
+	return response;
+}
+
+responseModel updateTask(requestModel request, database db) {
+	map<string, string> body = parseParams(request.body);
+	responseModel response;
+	nlohmann::json jsonBody;
+	response.proto = "HTTP/1.1";
+	string id = request.path_params["id"];
+	std::cout << parseMethod(request.method) << std::endl;
+	if(isAlright(id)) {
+		string setString;
+		int iter{};
+		for(std::pair<string, string> x: body) {
+			if(iter != 0) {
+				setString += ", ";
+			}
+			setString += x.first + " = '" + x.second + "'";
+			iter++;
+		}
+		string q = "UPDATE todo SET " + setString + " WHERE id = " + request.path_params["id"];
+		std::cout << q << std::endl;
+		pqxx::result res = db.query("UPDATE todo SET " + setString + " WHERE id = " + request.path_params["id"]+";");
+		response.code = 200;
+		response.status = "OK";
+		response.headers["Access-Control-Allow-Origin"] = '*';
+		return response;
+	}
+	response.code = 422;
+	response.status = "Unprocessable Entity";
+	response.headers["Access-Control-Allow-Origin"] = '*';
+	//for(std::pair<string, string> x: body) {
+	//	std::cout << x.first << "     " << x.second << std::endl;
+	//}
+	//::cout << "testing the endpoint" << std::endl;
+	return response;
+}
 
 
-/*
-MongoDB 
-No user auth because it's just pointless without ssl
-*/
 int main(int argc, char *argv[]) {
-
 	initializeMimeMap();
 	//cout << __cplusplus << endl; //14
 	database *db = new database();
 	ServerWithDB s(*db);
-	s.getEndpointsFromDirectory(".");
-	Tasks t;
-	s.on(Method::GET, "/dbtest", endpointFunction);
-	s.on(Method::GET, "/dbtest2", t.get);
-	//s.on("/dbtest2", t);
-
-	//s.on(METHOD, "PATH", functionHandler)
+	s.serveDirectory("build");
+	s.on(Method::GET, "/gettasks", getTasks);
+	s.on(Method::DELETE, "/deltask", deleteTask);
+	s.on(Method::POST, "/createtask", createTask);
+	s.on(Method::PUT, "/updatetask", updateTask);
 	s.mainLoop();
 	return 0;
 };
