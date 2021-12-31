@@ -116,8 +116,7 @@ std::map<pathString, pathString> pathDictionary;
 
 template <typename Context>
 class Server: public SocketServer {
-	public:
-		Context context;
+	private:
 		std::map<
 			Method, 
 			std::map<
@@ -126,13 +125,22 @@ class Server: public SocketServer {
 			>
 		> endpoints;
 		std::map<pathString, std::vector<Method>> preflight;
-		// For serveDirectory(s, i) function
+		
+		//Internal use only, does not add record to pathDictionary
+		//Other methods are call this one.
+		void createEndpoint(Method method, pathString path, handlerFunction<Context>);
+		
+		void serveDirectory(string pathToDirectory, int skip);
+		void createGetFileEndpoint(string path, int skip);
+	public:
+		
+		Context context;
 		static responseModel GETFileHandler(requestModel request, Context context);
 		responseModel preflightResponse(requestModel r);
 		void createGetFileEndpoint(string path);
 		void serveDirectory(string pathToDirectory);
 		void on(Method method, pathString path, handlerFunction<Context>);
-
+		
 		void handleIncomingData(string incomingData) override;
 		Server<Context>(Context &Extern) {
 			setup();

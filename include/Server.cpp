@@ -407,12 +407,19 @@ responseModel Server<Context>::preflightResponse(requestModel req) {
 
 template <typename Context>
 void Server<Context>::on(Method method, string path, handlerFunction<Context> handler){
-	string m = parseMethod(method);
-	string localPath = path.substr(1);
-	std::cout << "initializing " << m << " endpoint " << path.substr(1) << std::endl;
-	endpoints[method][localPath] = handler;
-	preflight[localPath].push_back(method);
+	translatePath(path);
+	pathDictionary[path] = path;
+	createEndpoint(method, path, handler);
 };
+
+
+template <typename Context>
+void Server<Context>::createEndpoint(Method method, string path, handlerFunction<Context> handler){
+	string m = parseMethod(method);
+	std::cout << "initializing " << m << " endpoint for " << path << std::endl;
+	endpoints[method][path] = handler;
+	preflight[path].push_back(method);
+}
 
 
 string getFilenameFromPath(string path) {
@@ -449,14 +456,49 @@ void Server<Context>::serveDirectory(string path) {
 					// ignorujemy . i .. obecne w każdym folderze
 					// strcmp cuz compiler complains about === 
 					// Given path leads to a directory. let the fun begin ^^
-					serveDirectory(path+"/"+entry->d_name);
+					serveDirectory(path+"/"+entry->d_name, initial);
 				}
 			}
 			closedir(directory);
 		} else if(statBuffer.st_mode & S_IFREG) {
 			// Given path leads to a file
 			if(getFilenameFromPath(path)[0] != IGNORE_CHAR) {
-				createGetFileEndpoint(path);
+				createGetFileEndpoint(path, initial);
+			}
+			return;
+		}
+		else {
+			//Given path doesn't lead to neither file, nor directory
+			return;
+		}
+	}	
+	//Such item doesn't exist
+}
+
+template <typename Context>
+void Server<Context>::serveDirectory(string path, int skip) {
+	DIR *directory;
+	struct dirent *entry;
+	struct stat statBuffer;
+	if(stat (path.c_str(), &statBuffer) == 0) {
+		if((directory = opendir(path.c_str()))) {
+			while((entry = readdir(directory))) {
+				if(
+						strcmp(entry->d_name, "..") != 0 && 
+						strcmp(entry->d_name, ".") != 0 &&
+						entry->d_name[0] != IGNORE_CHAR
+					) {
+					// ignorujemy . i .. obecne w każdym folderze
+					// strcmp cuz compiler complains about === 
+					// Given path leads to a directory. let the fun begin ^^
+					serveDirectory(path+"/"+entry->d_name, skip);
+				}
+			}
+			closedir(directory);
+		} else if(statBuffer.st_mode & S_IFREG) {
+			// Given path leads to a file
+			if(getFilenameFromPath(path)[0] != IGNORE_CHAR) {
+				createGetFileEndpoint(path, skip);
 			}
 			return;
 		}
@@ -470,18 +512,27 @@ void Server<Context>::serveDirectory(string path) {
 
 template <typename Context>
 void Server<Context>::createGetFileEndpoint(string path) {
-	translatePath(path);
-	pathDictionary[path] = path;
-	std::cout << "initializing GET endpoint " << path << std::endl;
-	endpoints[Method::GET][path] = GETFileHandler; //it
+	createGetFileEndpoint(path, 0);
 }
 
+template <typename Context>
+void Server<Context>::createGetFileEndpoint(string path, int skip) {
+	string networkPath = path.substr(skip);
+	translatePath(path);
+	translatePath(networkPath);
+	pathDictionary[networkPath] = path;
+	createEndpoint(Method::GET, path, GETFileHandler);
+}
 
 template <typename Context>
 responseModel Server<Context>::GETFileHandler(requestModel request, Context context) {
 	responseModel response;
 	string fileContent;
 	translatePath(request.path);
+	// Check if key exists.
+	if(pathDictionary.find(request.path) != pathDictionary.end() ) {
+		request.path = pathDictionary[request.path];
+	}
 	string mimetype = getMimeType(request.path);
 	std::cout << request.path << mimetype << std::endl;
 	response.proto = request.proto;
@@ -514,12 +565,12 @@ void Server<Context>::handleIncomingData(std::string incomingData) {
 			return;
 		};
 	};
-	
+	std::cout << "from " << request.path << " to " << pathDictionary[request.path] << std::endl;
 	std::cout << request.path << std::endl;
 	if(request.method == Method::OPTIONS) {
 		resp = preflightResponse(request).parse();
-	} else if(endpoints[request.method][request.path] != 0) {
-		resp = endpoints[request.method][request.path](request, context).parse();
+	} else if(endpoints[request.method][pathDictionary[request.path]] != 0) {
+		resp = endpoints[request.method][pathDictionary[request.path]](request, context).parse();
 	} else {
 		resp = HTTP_NOTFOUND;
 	}
