@@ -1,7 +1,6 @@
 #pragma once
 #include <dirent.h>
-#include <sys/types.h>
-#include <sys/socket.h>
+
 #include <sys/stat.h>
 
 #include <functional>
@@ -16,15 +15,14 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #define BACKLOG 10 // how many pending connections queue will hold
 #define DEFAULT_PORT 8080 // the port users will be connecting to
 #define IGNORE_CHAR '.'
 #define HTTP_BADREQUEST "HTTP/1.1 400 Bad Request\r\n\r\n <div>400 Bad Request</div>"
 #define HTTP_NOTFOUND "HTTP/1.1 404 Not Found\r\n\r\n <div>404 Not Found</div>"
-
-
-
 
 
 using std::string;
@@ -37,86 +35,121 @@ struct responseModel;
 map<string, string> mimetype_map;
 
 
-void *get_in_addr(struct sockaddr *sa);
 /* 
- * A function that returns appropriate sockaddr info struct for ipv4 and ipv6
+ * Returns appropriate sockaddr info struct for ipv4 and ipv6
+ */
+void *get_in_addr(struct sockaddr *sa);
+
+/*
+ * Returns string version of given method used in responses
  */
 string parseMethod(Method method); 
+
 /*
- * A function that returns string version of given method used in responses
+ * Returns enum version of given method used in functions
  */
 Method parseMethod(string method);
 
 /*
- * A function that returns enum version of given method used in functions
+ * Returns enum version of given method used in functions
  */
 void initializeMimeMap();
-/*
- * A function that returns enum version of given method used in functions
- */
-string getMimeType(string filename);
+
 /*
  * A function that returns string with appropriate mime type for given file
  */ 
-bool exists (string filename);
+string getMimeType(string filename);
+
 /*
  * A function that returns whether a specified file exists or not
  */ 
-void translatePath(string &path);
+bool exists (string filename);
+
 /*
  * A function that unifies paths between requests and filesystem
  */ 
-int parseRequest(string request, requestModel &result);
+void translatePath(string &path);
+
 /*
  * A function that parses request string into a request struct
  * returns 0 on success and -1 on failure
  */ 
-int loadFile(string path, string &content);
+int parseRequest(string request, requestModel &result);
+
 /*
  * A function that loads file content into a string
  * returns 0 on success and -1 on failure
  */ 
-bool isThereSuchFile(string &path, string &content);
+int loadFile(string path, string &content);
+
 /*
  * A function that maps files in specified directory
  */ 
-
+bool isThereSuchFile(string &path, string &content);
 
 
 class SocketServer {
-	// Pure socket setup, 0 implementation in diet.
+	//  Pure socket setup. 0% Implementation.
 	private:
+		//  structures for holding info about server for binding
 		struct addrinfo hints, *servinfo, *p;
-		// structures for holding info about server for binding
+		//  structure for holding info about remote client
 		struct sockaddr_storage their_addr;
-		// structure for holding info about remote client
 		char s[INET6_ADDRSTRLEN];
 
+		void bindToLocalAddress();
+	
 	protected: 
+		// file descriptor for unix style socket.
 		int serverSocketFileDescriptor, foreignSocketFileDescriptor;
-		// file descriptor for socket. In Unix everything is a file
 		socklen_t sin_size;
 	
 	public:
+		//  Service on which server will listen
 		int port = DEFAULT_PORT;
+		//  Override it for actual implementation
 		virtual void handleIncomingData(std::string incomingData) {};
-		//The stuff that is being done on every request
-		virtual void bindToLocalAddress();
+		//  even more setup
 		void setup();
-		//even more setup
+		//  data sending, receiving and subprocess creation
 		int mainLoop();
 		SocketServer() {};
 };
 
+
+
+template <typename Context>
+class HandlerClass {
+	public:
+		
+		virtual responseModel get(requestModel r, Context c);
+		virtual responseModel post(requestModel r, Context c);
+		virtual responseModel put(requestModel r, Context c);
+		virtual responseModel del(requestModel r, Context c);
+};
+
+
+// gosh im on fire!
+template <typename Context>
+using handlerClassMethod = responseModel HandlerClass<Context>::*(requestModel r, Context c);
+
+
 template <typename Context>
 using handlerFunction = std::function<responseModel(requestModel, Context)>;
+
+
 typedef string pathString;
 
+//  used for storing data about paths.
+//  Global, because developer might need it when defining path translations
 std::map<pathString, pathString> pathDictionary;
+
+
 
 template <typename Context>
 class Server: public SocketServer {
 	private:
+		//  A map of Handler functions and associated paths
 		std::map<
 			Method, 
 			std::map<
@@ -124,36 +157,40 @@ class Server: public SocketServer {
 				handlerFunction<Context> 
 			>
 		> endpoints;
-		std::map<pathString, std::vector<Method>> preflight;
 		
-		//Internal use only, does not add record to pathDictionary
-		//Other methods are call this one.
+		//dealing with CORS
+		std::map<pathString, std::vector<Method>> preflight;
+		responseModel preflightResponse(requestModel r);
+		
+		//  Internal use only. 
+		//  does not add record to pathDictionary
+		//  Other methods are call this one.
 		void createEndpoint(Method method, pathString path, handlerFunction<Context>);
 		
+		//  Used internally in functions with the same name.
 		void serveDirectory(string pathToDirectory, int skip);
 		void createGetFileEndpoint(string path, int skip);
-	public:
-		
-		Context context;
+
+		//  A handler function for dealing with singular files.
 		static responseModel GETFileHandler(requestModel request, Context context);
-		responseModel preflightResponse(requestModel r);
-		void createGetFileEndpoint(string path);
-		void serveDirectory(string pathToDirectory);
-		void on(Method method, pathString path, handlerFunction<Context>);
 		
+		//  Processsing requests
 		void handleIncomingData(string incomingData) override;
-		Server<Context>(Context &Extern) {
+	public:
+		//  Passed to every endpoint function.
+		Context context;
+		//  Used for defining file endpoints.
+		void createGetFileEndpoint(string path);
+		//  Function that maps directory into endpoints.
+		void serveDirectory(string pathToDirectory);
+		//  Function that creates an endpoint with custom handler.
+		void on(Method method, pathString path, handlerFunction<Context>);
+		template <typename Type>
+		void on(pathString, Type);
+		
+		Server<Context>(Context &External) {
 			setup();
-			context = Extern;
+			context = External;
 		}
 };
 
-	/*
-	 * f
-	 * pqxx::result g = s.context.query("SELECT * FROM todo");
-	for (auto const &row: g) {
-		for (auto const &field: row) {
-			std::cout << field << std::endl;
-		}
-	}
-	*/

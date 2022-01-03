@@ -31,7 +31,7 @@ class database {
 			pqxx::work trans(*conn);
 			pqxx::result res = trans.exec(query);
 			trans.commit();
-			conn->disconnect();
+			disconnect();
 			return res;
 		}
 		database() {
@@ -54,7 +54,7 @@ responseModel getTasks(requestModel request, database db) {
 	nlohmann::json jsonBody;
 	pqxx::result res = db.query("SELECT * FROM todo");
 	if(res.empty()) {
-		return {"HTTP/1.1", 404, "Not Found", {}, "<div>Not Found</div>"};
+		return NOT_FOUND;
 	}
 	int i{};
 	for(pqxx::row x: res) {
@@ -156,11 +156,100 @@ responseModel updateTask(requestModel request, database db) {
 }
 
 
+class SharedState {
+	public:
+		json current;
+		int fd1[2];
+
+		json getState() {
+			string g;
+			read(fd1[0], &g, sizeof(g));
+			current = json::parse(g);
+			return current;
+		};
+		
+		void setState(json s) {
+			string d = s.dump().c_str();
+			std::cout << "!problem" << std::endl;
+			if(write(fd1[1], d.c_str(), sizeof(d.c_str())) == -1) {
+			};
+
+			
+		};
+
+		SharedState(json s) {
+			
+		};
+};
+
+
+class Teset: public HandlerClass<database> {
+	private:
+		int i;
+	public:
+		responseModel get(requestModel r, database d) override {
+			responseModel response;
+			response.proto = "HTTP/1.1";
+			response.code = 200;
+			response.status = "OK";
+			response.body = "<div>just to suffer... "+std::to_string(i)+"</div>";
+			i++;
+			return response;
+		};
+		string test(int i) {
+			return "ggggggg"+ std::to_string(i);
+		};
+};
+
+string yest(int i) {
+	return "hhhhhh" + std::to_string(i);
+}
+
+template <class C>
+C& singleton()
+{
+	static C c;
+	return c;
+}
+
+
+//  gosh
+template<typename Context>
+template<typename Type>
+void Server<Context>::on(pathString path, Type h) {
+	if(std::is_base_of<HandlerClass<Context>, Type>()) {
+		using namespace std::placeholders;
+		
+		handlerFunction<Context> getHandler = 
+			std::bind(&Type::get, &h, _1, _2);
+		on(Method::GET, path, getHandler);
+		
+		handlerFunction<Context> postHandler = 
+			std::bind(&Type::post, &h, _1, _2);
+		on(Method::POST, path, postHandler);
+		
+		handlerFunction<Context> putHandler = 
+			std::bind(&Type::put, &h, _1, _2);
+		on(Method::PUT, path, putHandler);
+		
+		handlerFunction<Context> delHandler = 
+			std::bind(&Type::del, &h, _1, _2);
+		on(Method::DELETE, path, delHandler);
+	} else {
+		std::cout << "Given type does not extend ClassHandler<>!" << std::endl;
+	}
+};
+
+
 int main(int argc, char *argv[]) {
 	initializeMimeMap();
+	
 	//cout << __cplusplus << endl; //14
+	
 	database *db = new database();
 	ServerWithDB s(*db);
+	Teset c = singleton<Teset>();
+	s.on("/test", c);
 	s.serveDirectory("build");
 	s.on(Method::GET, "/gettasks", getTasks);
 	s.on(Method::DELETE, "/deltask", deleteTask);

@@ -1,17 +1,15 @@
 #include "Server.h"
 #include "iostream"
 #include "regex"
+#include <thread>
 
 
 struct responseModel {
 	string proto;
-	//for now will do
 	int code;
 	string status;
-
 	map<string, string> headers;
 	string body;
-
 	string parse();
 };
 
@@ -26,15 +24,9 @@ string responseModel::parse() {
 	return result;
 };
 
+
 responseModel NOT_IMPLEMENTED = {"HTTP/1.1", 501, "Not Implemented", {}, "Not Implemented"};
-
-int getaddrinfo(
-	const char *node, // e.g. "www.example.com" or IP
-	const char *service, // e.g. "http" or port number
-	const struct addrinfo *hints,
-	struct addrinfo **res
-);
-
+responseModel NOT_FOUND = {"HTTP/1.1", 404, "Not Found", {}, "<div>Not Found</div>"};
 
 struct requestModel {
 	Method method;
@@ -44,7 +36,6 @@ struct requestModel {
 	map<string, string> headers;
 	string body;
 };
-
 
 enum class Method {
 	GET = 1,
@@ -103,7 +94,6 @@ Method parseMethod(string method) {
 }
 
 
-// get sockaddr, but protocol agnostic
 void *get_in_addr(struct sockaddr *sa) {
 	if(sa->sa_family == AF_INET) {
 		//handle ipv4
@@ -173,6 +163,7 @@ void initializeMimeMap() {
 	mimetype_map["png"] = "image/png";
 }
 
+
 map<string, string> parseParams(string fullPath) {
 	map<string, string> result;
 	std::cout << fullPath << std::endl;
@@ -180,7 +171,6 @@ map<string, string> parseParams(string fullPath) {
 	string path_params = fullPath.substr(fullPath.find("?")+1);
 	auto params_begin = std::sregex_iterator(path_params.begin(), path_params.end(), paramsR);
 	auto params_end = std::sregex_iterator();
-	//int paramsCount = distance(params_begin, params_end);
 	for(std::sregex_iterator i = params_begin; i != params_end; i++) {
 		string parameter = (*i).str();
 		std::cout << "PARAM" << parameter << std::endl;
@@ -188,10 +178,8 @@ map<string, string> parseParams(string fullPath) {
 		int keyEndsAt;
 		std::cout << parameter.find('=') << std::endl; 
 		if(((keyEndsAt = parameter.find('=')) != -1)) {
-			key = parameter.substr(0, keyEndsAt); //until =
-			val = parameter.substr(keyEndsAt+1); //without =
-			//std::cout << "enter " << keyEndsAt << " " << parameter[parameter.find('=')] << std::endl;
-			//std::cout << "added pair " << key << " " << val << std::endl;
+			key = parameter.substr(0, keyEndsAt);
+			val = parameter.substr(keyEndsAt+1);	
 		} else {
 			key = parameter;
 			val = "true";
@@ -209,6 +197,7 @@ map<string, string> handleParams(string fullPath) {
 	return result;
 }
 
+// A mess...
 int parseRequest(string request, requestModel &result) {
 	map<string, string> headers;
 	::std::regex firstLineR = ::std::regex(R"(^(.*)\S)");
@@ -233,6 +222,7 @@ int parseRequest(string request, requestModel &result) {
 	
 	string proto = firstLine.substr(methodEndsAt + 1 + pathEndsAt + 1); 
 	// cumulated offset
+	
 	auto headers_begin = std::sregex_iterator(request.begin(), request.end(), headersR);
 	auto headers_end = std::sregex_iterator();
 	string lastHeader;
@@ -303,13 +293,14 @@ bool isThereSuchFile(string &path, string &content) {
 
 
 void SocketServer::bindToLocalAddress() {
-	int addrinfoStatus;
+	
 	//Tłumaczenie tla peasantów od pythona i typescripta jak ja
 	//Node == IP
 	//Null znaczy że tylko localhost może się połączyć. NAWET 127.0.0.1 i [::1] nie zadziałają
 	//Service == PORT
 	//hints == OPTIONS
-	//servinfo == ??
+	//servinfo == 
+	int addrinfoStatus;
 	if((addrinfoStatus = getaddrinfo("0.0.0.0", std::to_string(port).c_str(), &hints, &servinfo)) != 0) {
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(addrinfoStatus)); 
 	}
@@ -360,13 +351,14 @@ int SocketServer::mainLoop() {
 	while(true) {
 		sin_size = sizeof their_addr;
 		foreignSocketFileDescriptor = accept(serverSocketFileDescriptor, (struct sockaddr *)&their_addr, &sin_size);
-		if(!fork()) {
+		//if(!fork()) {
+		std::thread worker( [&]() {
 			std::string incomingData;
 			char buff[8096];
 			int bytesRead;
 			if(foreignSocketFileDescriptor == -1) {
 				perror("accept");
-				continue;
+				return;
 			}
 			inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr *) &their_addr), s, sizeof s);
 			printf("server: got connection from %s\n", s);
@@ -376,9 +368,11 @@ int SocketServer::mainLoop() {
 					perror("read");
 				}
 				incomingData += buff;
+				std::cout << incomingData << std::endl;
 			}
 			handleIncomingData(incomingData);
-		}
+		});
+		worker.join();
 		close(foreignSocketFileDescriptor); // done using it
 	}
 	close(serverSocketFileDescriptor); // no need to listen anymore
@@ -406,7 +400,12 @@ responseModel Server<Context>::preflightResponse(requestModel req) {
 
 
 template <typename Context>
-void Server<Context>::on(Method method, string path, handlerFunction<Context> handler){
+void Server<Context>::on(
+		Method method, 
+		string path, 
+		handlerFunction<Context> handler
+	)
+{
 	translatePath(path);
 	pathDictionary[path] = path;
 	createEndpoint(method, path, handler);
@@ -414,12 +413,19 @@ void Server<Context>::on(Method method, string path, handlerFunction<Context> ha
 
 
 template <typename Context>
-void Server<Context>::createEndpoint(Method method, string path, handlerFunction<Context> handler){
+void Server<Context>::createEndpoint(
+		Method method, 
+		string path, 
+		handlerFunction<Context> handler
+	)
+{
 	string m = parseMethod(method);
 	std::cout << "initializing " << m << " endpoint for " << path << std::endl;
 	endpoints[method][path] = handler;
-	preflight[path].push_back(method);
+ 	preflight[path].push_back(method);
 }
+
+
 
 
 string getFilenameFromPath(string path) {
@@ -530,9 +536,9 @@ responseModel Server<Context>::GETFileHandler(requestModel request, Context cont
 	string fileContent;
 	translatePath(request.path);
 	// Check if key exists.
-	if(pathDictionary.find(request.path) != pathDictionary.end() ) {
+	//if(pathDictionary.find(request.path) != pathDictionary.end() ) {
 		request.path = pathDictionary[request.path];
-	}
+	//}
 	string mimetype = getMimeType(request.path);
 	std::cout << request.path << mimetype << std::endl;
 	response.proto = request.proto;
@@ -551,31 +557,58 @@ responseModel Server<Context>::GETFileHandler(requestModel request, Context cont
 	return response;
 }
 
+template <typename Context>
+responseModel HandlerClass<Context>::get(requestModel r, Context c) {
+	return NOT_IMPLEMENTED;
+};
+template <typename Context>
+responseModel HandlerClass<Context>::post(requestModel r, Context c) {
+	return NOT_IMPLEMENTED;
+};
+template <typename Context>
+responseModel HandlerClass<Context>::put(requestModel r, Context c) {
+	return NOT_IMPLEMENTED;
+};
+template <typename Context>
+responseModel HandlerClass<Context>::del(requestModel r, Context c) {
+	return NOT_IMPLEMENTED;
+};
+
 
 template <typename Context>
 void Server<Context>::handleIncomingData(std::string incomingData) {
 	string resp;
 	struct requestModel request;
-	if(parseRequest(incomingData, request) == -1) {
-		//REDUCE THE AMOUNT OF ENDPOINTS PLZ
-		resp = HTTP_BADREQUEST;
-		
+	// added after swithcing to thread from fork.
+	try {
+		if(parseRequest(incomingData, request) == -1) {
+			resp = HTTP_BADREQUEST;
+			if(send(foreignSocketFileDescriptor, resp.c_str(), resp.size(), 0) == -1) {
+				perror("send");
+				std::cout << "bad request send error" << std::endl;
+				return;
+			};
+		};
+		std::cout << "from " << request.path << " to " << pathDictionary[request.path] << std::endl;
+		// Sometimes requests come too often for threads. This happens when I kepp
+		// F5 pressed for like 6 seconds. Socket read returns empty string. In that
+		// case fork() works just fine, but thread breaks quits without exception...
+		// checking if there actually is data before handling request mitigates this issue
+		if(request.path == "") {
+			return;
+		}
+		if(request.method == Method::OPTIONS) {
+			resp = preflightResponse(request).parse();
+		} else if(endpoints[request.method][pathDictionary[request.path]] != 0) {
+			resp = endpoints[request.method][pathDictionary[request.path]](request, context).parse();
+		} else {
+			resp = HTTP_NOTFOUND;
+		}
 		if(send(foreignSocketFileDescriptor, resp.c_str(), resp.size(), 0) == -1) {
 			perror("send");
-			return;
 		};
-	};
-	std::cout << "from " << request.path << " to " << pathDictionary[request.path] << std::endl;
-	std::cout << request.path << std::endl;
-	if(request.method == Method::OPTIONS) {
-		resp = preflightResponse(request).parse();
-	} else if(endpoints[request.method][pathDictionary[request.path]] != 0) {
-		resp = endpoints[request.method][pathDictionary[request.path]](request, context).parse();
-	} else {
-		resp = HTTP_NOTFOUND;
+	} catch (const std::exception& e) {
+		std::cout << e.what() << std::endl;
 	}
-	if(send(foreignSocketFileDescriptor, resp.c_str(), resp.size(), 0) == -1) {
-		perror("send");
-	};
 }
-	
+
