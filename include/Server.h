@@ -138,12 +138,28 @@ template <typename Context>
 using handlerFunction = std::function<responseModel(requestModel, Context)>;
 
 
+template <typename Context>
+using string_handlerFunction = std::function<string(requestModel, Context)>;
+
+
 typedef string pathString;
 
 //  used for storing data about paths.
 //  Global, because developer might need it when defining path translations
 std::map<pathString, pathString> pathDictionary;
 
+
+template <typename Context>
+class MiddlewareFunctor {
+	public:
+		virtual requestModel wrapRequest(requestModel req);
+		virtual responseModel wrapResponse(responseModel res);
+		responseModel operator() (
+				handlerFunction<Context> fn, 
+				requestModel &r, 
+				Context &c
+			);
+};
 
 
 template <typename Context>
@@ -166,6 +182,9 @@ class Server: public SocketServer {
 		//  does not add record to pathDictionary
 		//  Other methods are call this one.
 		void createEndpoint(Method method, pathString path, handlerFunction<Context>);
+
+		//  version where we only define body
+		void createEndpoint(Method method, pathString path, std::function<string(requestModel, Context)>);
 		
 		//  Used internally in functions with the same name.
 		void serveDirectory(string pathToDirectory, int skip);
@@ -185,8 +204,20 @@ class Server: public SocketServer {
 		void serveDirectory(string pathToDirectory);
 		//  Function that creates an endpoint with custom handler.
 		void on(Method method, pathString path, handlerFunction<Context>);
+		//  For when you only need to define body
+		void on(Method method, pathString path, string_handlerFunction<Context>);
+		
+		//wrap handlerFunction in middleware
+		handlerFunction<Context> onionize(handlerFunction<Context> fn);
+		
+		// Two ways of achieving the same thing for
+		// demonstration purpose
 		template <typename Type>
 		void on(pathString, Type);
+		//  You can't store raw pointers in vectors
+		std::vector<
+				MiddlewareFunctor<Context>*
+			> middleware;
 		
 		Server<Context>(Context &External) {
 			setup();

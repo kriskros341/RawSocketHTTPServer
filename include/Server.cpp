@@ -166,17 +166,14 @@ void initializeMimeMap() {
 
 map<string, string> parseParams(string fullPath) {
 	map<string, string> result;
-	std::cout << fullPath << std::endl;
 	::std::regex paramsR = ::std::regex(R"((([\w\d\=\(\)\+\~\-\.\!\*\'\%\`\ ])+))");
 	string path_params = fullPath.substr(fullPath.find("?")+1);
 	auto params_begin = std::sregex_iterator(path_params.begin(), path_params.end(), paramsR);
 	auto params_end = std::sregex_iterator();
 	for(std::sregex_iterator i = params_begin; i != params_end; i++) {
 		string parameter = (*i).str();
-		std::cout << "PARAM" << parameter << std::endl;
 		string key, val;
 		int keyEndsAt;
-		std::cout << parameter.find('=') << std::endl; 
 		if(((keyEndsAt = parameter.find('=')) != -1)) {
 			key = parameter.substr(0, keyEndsAt);
 			val = parameter.substr(keyEndsAt+1);	
@@ -332,6 +329,19 @@ void SocketServer::bindToLocalAddress() {
 	}
 }
 
+/*
+template <typename T>
+struct Node {
+	T val;
+	Node* next;
+};
+
+template <typename T>
+struct Queue {
+	T val;
+	Queue* head;
+};
+*/
 
 void SocketServer::setup() {
 	hints.ai_family = AF_UNSPEC; //Accept both IPV4 and IPV6
@@ -368,7 +378,6 @@ int SocketServer::mainLoop() {
 					perror("read");
 				}
 				incomingData += buff;
-				std::cout << incomingData << std::endl;
 			}
 			handleIncomingData(incomingData);
 		});
@@ -393,39 +402,9 @@ responseModel Server<Context>::preflightResponse(requestModel req) {
 			methods += ", ";
 		}
 	}
-	std::cout << methods << std::endl;
 	res.headers["Access-Control-Allow-Methods"] = methods;
 	return res;
 };
-
-
-template <typename Context>
-void Server<Context>::on(
-		Method method, 
-		string path, 
-		handlerFunction<Context> handler
-	)
-{
-	translatePath(path);
-	pathDictionary[path] = path;
-	createEndpoint(method, path, handler);
-};
-
-
-template <typename Context>
-void Server<Context>::createEndpoint(
-		Method method, 
-		string path, 
-		handlerFunction<Context> handler
-	)
-{
-	string m = parseMethod(method);
-	std::cout << "initializing " << m << " endpoint for " << path << std::endl;
-	endpoints[method][path] = handler;
- 	preflight[path].push_back(method);
-}
-
-
 
 
 string getFilenameFromPath(string path) {
@@ -540,7 +519,6 @@ responseModel Server<Context>::GETFileHandler(requestModel request, Context cont
 		request.path = pathDictionary[request.path];
 	//}
 	string mimetype = getMimeType(request.path);
-	std::cout << request.path << mimetype << std::endl;
 	response.proto = request.proto;
 	if(loadFile(request.path, fileContent) == 0) {
 		response.code = 200;
@@ -589,7 +567,7 @@ void Server<Context>::handleIncomingData(std::string incomingData) {
 				return;
 			};
 		};
-		std::cout << "from " << request.path << " to " << pathDictionary[request.path] << std::endl;
+		std::cout << "translating from " << request.path << " to " << pathDictionary[request.path] << std::endl;
 		// Sometimes requests come too often for threads. This happens when I kepp
 		// F5 pressed for like 6 seconds. Socket read returns empty string. In that
 		// case fork() works just fine, but thread breaks quits without exception...
@@ -611,4 +589,163 @@ void Server<Context>::handleIncomingData(std::string incomingData) {
 		std::cout << e.what() << std::endl;
 	}
 }
+
+
+template <typename Context>
+handlerFunction<Context> Server<Context>::onionize(
+		handlerFunction<Context> fn
+	) {
+	for(MiddlewareFunctor<Context> functor: middleware) {
+		
+		handlerFunction<Context> new_fn = 
+			[=](requestModel r, Context c) {
+				return functor(fn, r, c);
+			};
+		fn = new_fn;
+
+	}
+	return fn;
+}
+
+//  misc  //
+//  MiddlewareFunctor  //
+
+template <typename Context>
+requestModel MiddlewareFunctor<Context>::wrapRequest(requestModel req) {
+	return req;
+};
+
+template <typename Context>
+responseModel MiddlewareFunctor<Context>::wrapResponse(responseModel res) {
+	return res;
+};
+
+template <typename Context>
+responseModel MiddlewareFunctor<Context>::operator() (
+		handlerFunction<Context> fn, 
+		requestModel &r, 
+		Context &c
+	) 
+{
+	std::cout << "Applying middleware" << std::endl;
+	r = wrapRequest(r);
+	responseModel response = fn(r, c);
+	response = wrapResponse(response);
+	return response;
+};
+
+//  MiddlewareFunctor  //
+//  on  //
+
+template <typename Context>
+void Server<Context>::on(
+		Method method, 
+		string path, 
+		handlerFunction<Context> handler
+	)
+{
+	handlerFunction<Context> fn = [=](requestModel r, Context c) {
+		responseModel response = handler(r, c);
+		return response;
+	};
+	translatePath(path);
+	pathDictionary[path] = path;
+	createEndpoint(method, path, fn);
+};
+
+
+template <typename Context>
+void Server<Context>::on(
+		Method method, 
+		string path, 
+		string_handlerFunction<Context> handler
+	)
+{
+	handlerFunction<Context> fn = [&](requestModel r, Context c) {
+		responseModel response;
+		response.proto = "HTTP/1.1";
+		response.code = 200;
+		response.status = "OK";
+		response.body = handler(r, c);
+		return response;
+	};
+	translatePath(path);
+	pathDictionary[path] = path;
+	createEndpoint(method, path, fn);
+};
+
+//  gosh
+template<typename Context>
+template<typename Type>
+void Server<Context>::on(pathString path, Type h) {
+	if(std::is_base_of<HandlerClass<Context>, Type>()) {
+		using namespace std::placeholders;
+
+		handlerFunction<Context> getHandler = 
+			[&](requestModel r, Context c){
+					return h.get(r, c);
+				};
+		on(Method::GET, path, getHandler);
+		
+		handlerFunction<Context> postHandler = 
+			std::bind(&Type::post, &h, _1, _2);
+		on(Method::POST, path, postHandler);
+		
+		handlerFunction<Context> putHandler = 
+			std::bind(&Type::put, &h, _1, _2);
+		on(Method::PUT, path, putHandler);
+		
+		handlerFunction<Context> delHandler = 
+			std::bind(&Type::del, &h, _1, _2);
+		on(Method::DELETE, path, delHandler);
+	} else {
+		std::cout << "Given type does not extend ClassHandler<>!" << std::endl;
+	}
+};
+
+//  on  //
+//  createEndpoint  //
+
+template <typename Context>
+class CORSMiddleware: public MiddlewareFunctor<Context> {
+	public: 
+		std::vector<string> origins;
+		responseModel wrapResponse(responseModel response) override {
+
+			std::cout << "Applying CORS middleware" << std::endl;
+			response.headers["Access-Control-Allow-Origin"] = '*';
+			return response;
+		}
+};
+
+template <typename Context>
+handlerFunction<Context> test(handlerFunction<Context> &fn) {
+	auto cr = CORSMiddleware<Context>();
+	return [&](requestModel r, Context c) mutable {
+		return fn(r, c);
+	};
+}
+
+
+
+
+template <typename Context>
+void Server<Context>::createEndpoint(
+		Method method, 
+		string path, 
+		handlerFunction<Context> handler
+	)
+{
+	string m = parseMethod(method);
+	std::cout << "initializing " << m << " endpoint for " << path << std::endl;
+	const handlerFunction<Context> fn = [=](requestModel r, Context c) {
+		// [0]->(...) doesnt work ;.;
+		return middleware[0]->operator()(handler, r, c);
+	};
+	endpoints[method][path] = fn;
+ 	preflight[path].push_back(method);
+}
+
+//  createEndpoint  //
+
 

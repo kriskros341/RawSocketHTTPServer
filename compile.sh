@@ -1,1 +1,1 @@
-gcc main.cpp -g -lstdc++ -lpqxx -pthread -lm -o executable
+gcc $1 -g -lstdc++ -lpqxx -pthread -lm -o executable
