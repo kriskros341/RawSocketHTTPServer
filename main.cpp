@@ -44,7 +44,11 @@ class ServerWithDB: public Server<database> {
 	public:
 		ServerWithDB(database &db) : 
 		Server<database>(db) {
-			std::cout << "database " << context.conn->dbname() << " connected" << std::endl;
+			std::cout 
+					<< "database " 
+					<< context.conn->dbname() 
+					<< " connected" 
+					<< std::endl;
 		};
 };
 
@@ -52,7 +56,6 @@ class ServerWithDB: public Server<database> {
 responseModel getTasks(requestModel request, database db) {
 	responseModel response;
 	nlohmann::json jsonBody;
-	std::cout << "TEST 2" << std::endl;
 	pqxx::result res = db.query("SELECT * FROM todo");
 	if(res.empty()) {
 		return NOT_FOUND;
@@ -64,15 +67,10 @@ responseModel getTasks(requestModel request, database db) {
 		jsonBody[i]["isdone"] = x["isdone"].as<bool>();
 		i++;
 	};
-	response.proto = "HTTP/1.1";
-	response.code = 200;
-	response.status = "OK";
-	//response.headers["Access-Control-Allow-Origin"] = '*';
-	//response.headers["Access-Control-Allow-Headers"] = '*';
-	response.headers["Access-Control-Allow-Methods"] = '*';
 	response.body = jsonBody.dump();
 	return response;
 };
+
 
 bool isAlright(string s) {
 	if(s.length() == 0) {
@@ -86,6 +84,7 @@ bool isAlright(string s) {
 	return true;
 }
 
+
 responseModel deleteTask(requestModel request, database db) {
 	responseModel response;
 	nlohmann::json jsonBody;
@@ -93,40 +92,28 @@ responseModel deleteTask(requestModel request, database db) {
 	if(isAlright(id)) {
 		pqxx::result res = db.query("DELETE FROM todo WHERE id="+id);
 	}
-	response.proto = "HTTP/1.1";
-	response.code = 200;
-	response.status = "OK";
-	response.headers["Access-Control-Allow-Origin"] = '*';
 	return response;
 }
+
 
 responseModel createTask(requestModel request, database db) {
 	map<string, string> body = parseParams(request.body);
 	responseModel response;
 	nlohmann::json jsonBody;
-	response.proto = "HTTP/1.1";
 	if(isAlright(body["id"]) && body["name"].length() != 0 && body["isdone"] == "false" || body["isdone"] == "true") {
 		pqxx::result res = db.query("INSERT INTO todo VALUES("+body["id"]+", \'"+body["name"]+"\', "+body["isdone"]+")");
-		response.code = 200;
-		response.status = "OK";
-		response.headers["Access-Control-Allow-Origin"] = '*';
 		return response;
 	}
 	response.code = 422;
 	response.status = "Unprocessable Entity";
-	response.headers["Access-Control-Allow-Origin"] = '*';
-	//for(std::pair<string, string> x: body) {
-	//	std::cout << x.first << "     " << x.second << std::endl;
-	//}
-	//::cout << "testing the endpoint" << std::endl;
 	return response;
 }
+
 
 responseModel updateTask(requestModel request, database db) {
 	map<string, string> body = parseParams(request.body);
 	responseModel response;
 	nlohmann::json jsonBody;
-	response.proto = "HTTP/1.1";
 	string id = request.path_params["id"];
 	std::cout << parseMethod(request.method) << std::endl;
 	if(isAlright(id)) {
@@ -142,18 +129,10 @@ responseModel updateTask(requestModel request, database db) {
 		string q = "UPDATE todo SET " + setString + " WHERE id = " + request.path_params["id"];
 		std::cout << q << std::endl;
 		pqxx::result res = db.query("UPDATE todo SET " + setString + " WHERE id = " + request.path_params["id"]+";");
-		response.code = 200;
-		response.status = "OK";
-		response.headers["Access-Control-Allow-Origin"] = '*';
 		return response;
 	}
 	response.code = 422;
 	response.status = "Unprocessable Entity";
-	response.headers["Access-Control-Allow-Origin"] = '*';
-	//for(std::pair<string, string> x: body) {
-	//	std::cout << x.first << "     " << x.second << std::endl;
-	//}
-	//::cout << "testing the endpoint" << std::endl;
 	return response;
 }
 
@@ -164,9 +143,6 @@ class Teset: public HandlerClass<database> {
 	public:
 		responseModel get(requestModel r, database d) {
 			responseModel response;
-			response.proto = "HTTP/1.1";
-			response.code = 200;
-			response.status = "OK";
 			response.body = "<div>just to suffer... "+std::to_string(i)+"</div>";
 			i++;
 			return response;
@@ -177,15 +153,15 @@ class Teset: public HandlerClass<database> {
 
 
 int main(int argc, char *argv[]) {
-	initializeMimeMap();
-	
 	//cout << __cplusplus << endl; //14
-	
-	database *db = new database();
+	database* db = new database();
 	ServerWithDB s(*db);
+	
 	auto CORS = new CORSMiddleware<database>();
 	s.middleware.push_back(CORS);
-	// lmao
+	auto DF = new DefaultFieldsMiddleware<database>();
+	s.middleware.push_back(DF);
+	
 	Teset c = Teset();
 	s.on("/test", c);
 	s.serveDirectory("build");
@@ -194,6 +170,7 @@ int main(int argc, char *argv[]) {
 	s.on(Method::POST, "/createtask", createTask);
 	s.on(Method::PUT, "/updatetask", updateTask);
 	s.mainLoop();
+	
 	return 0;
 };
 

@@ -34,12 +34,10 @@ struct requestModel;
 struct responseModel;
 map<string, string> mimetype_map;
 
-
 /* 
- * Returns appropriate sockaddr info struct for ipv4 and ipv6
+ * Creates appropriate sockaddr info struct for ipv4 and ipv6
  */
 void *get_in_addr(struct sockaddr *sa);
-
 /*
  * Returns string version of given method used in responses
  */
@@ -92,9 +90,9 @@ class SocketServer {
 	//  Pure socket setup. 0% Implementation.
 	private:
 		//  structures for holding info about server for binding
-		struct addrinfo hints, *servinfo, *p;
+		addrinfo hints, *servinfo, *p;
 		//  structure for holding info about remote client
-		struct sockaddr_storage their_addr;
+		sockaddr_storage their_addr;
 		char s[INET6_ADDRSTRLEN];
 
 		void bindToLocalAddress();
@@ -121,7 +119,6 @@ class SocketServer {
 template <typename Context>
 class HandlerClass {
 	public:
-		
 		virtual responseModel get(requestModel r, Context c);
 		virtual responseModel post(requestModel r, Context c);
 		virtual responseModel put(requestModel r, Context c);
@@ -129,15 +126,12 @@ class HandlerClass {
 };
 
 
-// gosh im on fire!
-template <typename Context>
-using handlerClassMethod = responseModel HandlerClass<Context>::*(requestModel r, Context c);
-
-
+//  a type that every endpoint function must imitate
 template <typename Context>
 using handlerFunction = std::function<responseModel(requestModel, Context)>;
 
 
+//  a type that every endpoint object must imitate
 template <typename Context>
 using string_handlerFunction = std::function<string(requestModel, Context)>;
 
@@ -145,10 +139,14 @@ using string_handlerFunction = std::function<string(requestModel, Context)>;
 typedef string pathString;
 
 //  used for storing data about paths.
-//  Global, because developer might need it when defining path translations
+//  Global, because developer might need
+//  it when defining custom path translations
 std::map<pathString, pathString> pathDictionary;
 
 
+/*
+ * A structure that decorates endpoint function
+ * */
 template <typename Context>
 class MiddlewareFunctor {
 	public:
@@ -165,7 +163,7 @@ class MiddlewareFunctor {
 template <typename Context>
 class Server: public SocketServer {
 	private:
-		//  A map of Handler functions and associated paths
+		//  A map of Handler functions and associated paths/methods
 		std::map<
 			Method, 
 			std::map<
@@ -178,17 +176,16 @@ class Server: public SocketServer {
 		std::map<pathString, std::vector<Method>> preflight;
 		responseModel preflightResponse(requestModel r);
 		
-		//  Internal use only. 
-		//  does not add record to pathDictionary
+		//  Internal use only. Does not add record to pathDictionary
 		//  Other methods are call this one.
 		void createEndpoint(Method method, pathString path, handlerFunction<Context>);
 
-		//  version where we only define body
+		//  version where we only define body of response
 		void createEndpoint(Method method, pathString path, std::function<string(requestModel, Context)>);
 		
 		//  Used internally in functions with the same name.
-		void serveDirectory(string pathToDirectory, int skip);
-		void createGetFileEndpoint(string path, int skip);
+		void serveDirectory(pathString pathToDirectory, int skip);
+		void createGetFileEndpoint(pathString path, int skip);
 
 		//  A handler function for dealing with singular files.
 		static responseModel GETFileHandler(requestModel request, Context context);
@@ -199,9 +196,9 @@ class Server: public SocketServer {
 		//  Passed to every endpoint function.
 		Context context;
 		//  Used for defining file endpoints.
-		void createGetFileEndpoint(string path);
+		void createGetFileEndpoint(pathString path);
 		//  Function that maps directory into endpoints.
-		void serveDirectory(string pathToDirectory);
+		void serveDirectory(pathString pathToDirectory);
 		//  Function that creates an endpoint with custom handler.
 		void on(Method method, pathString path, handlerFunction<Context>);
 		//  For when you only need to define body

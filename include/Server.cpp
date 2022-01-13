@@ -329,19 +329,6 @@ void SocketServer::bindToLocalAddress() {
 	}
 }
 
-/*
-template <typename T>
-struct Node {
-	T val;
-	Node* next;
-};
-
-template <typename T>
-struct Queue {
-	T val;
-	Queue* head;
-};
-*/
 
 void SocketServer::setup() {
 	hints.ai_family = AF_UNSPEC; //Accept both IPV4 and IPV6
@@ -349,7 +336,7 @@ void SocketServer::setup() {
 	hints.ai_flags = AI_PASSIVE;  //Do not initiate connection.
 	memset(&hints, 0, sizeof hints);
 	bindToLocalAddress();
-	printf("server: waiting for connections to %d...\n", this->port);
+	printf("server: waiting for connections to %d...\n", port);
 };
 
 
@@ -363,25 +350,10 @@ int SocketServer::mainLoop() {
 		foreignSocketFileDescriptor = accept(serverSocketFileDescriptor, (struct sockaddr *)&their_addr, &sin_size);
 		//if(!fork()) {
 		std::thread worker( [&]() {
-			std::string incomingData;
-			char buff[8096];
-			int bytesRead;
-			if(foreignSocketFileDescriptor == -1) {
-				perror("accept");
-				return;
-			}
-			inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr *) &their_addr), s, sizeof s);
-			printf("server: got connection from %s\n", s);
-			if((bytesRead = read(foreignSocketFileDescriptor, buff, 8096)) > 0) {
-				//TO IMPROVE
-				if(bytesRead == -1) {
-					perror("read");
-				}
-				incomingData += buff;
-			}
-			handleIncomingData(incomingData);
+			//do_stuff()
 		});
 		worker.join();
+		//}
 		close(foreignSocketFileDescriptor); // done using it
 	}
 	close(serverSocketFileDescriptor); // no need to listen anymore
@@ -450,12 +422,8 @@ void Server<Context>::serveDirectory(string path) {
 			if(getFilenameFromPath(path)[0] != IGNORE_CHAR) {
 				createGetFileEndpoint(path, initial);
 			}
-			return;
 		}
-		else {
-			//Given path doesn't lead to neither file, nor directory
-			return;
-		}
+		//Given path doesn't lead to neither file, nor directory
 	}	
 	//Such item doesn't exist
 }
@@ -590,23 +558,6 @@ void Server<Context>::handleIncomingData(std::string incomingData) {
 	}
 }
 
-
-template <typename Context>
-handlerFunction<Context> Server<Context>::onionize(
-		handlerFunction<Context> fn
-	) {
-	for(MiddlewareFunctor<Context> functor: middleware) {
-		
-		handlerFunction<Context> new_fn = 
-			[=](requestModel r, Context c) {
-				return functor(fn, r, c);
-			};
-		fn = new_fn;
-
-	}
-	return fn;
-}
-
 //  misc  //
 //  MiddlewareFunctor  //
 
@@ -627,7 +578,6 @@ responseModel MiddlewareFunctor<Context>::operator() (
 		Context &c
 	) 
 {
-	std::cout << "Applying middleware" << std::endl;
 	r = wrapRequest(r);
 	responseModel response = fn(r, c);
 	response = wrapResponse(response);
@@ -636,6 +586,7 @@ responseModel MiddlewareFunctor<Context>::operator() (
 
 //  MiddlewareFunctor  //
 //  on  //
+
 
 template <typename Context>
 void Server<Context>::on(
@@ -669,9 +620,7 @@ void Server<Context>::on(
 		response.body = handler(r, c);
 		return response;
 	};
-	translatePath(path);
-	pathDictionary[path] = path;
-	createEndpoint(method, path, fn);
+	on(method, path, fn);
 };
 
 //  gosh
@@ -711,9 +660,29 @@ class CORSMiddleware: public MiddlewareFunctor<Context> {
 	public: 
 		std::vector<string> origins;
 		responseModel wrapResponse(responseModel response) override {
-
 			std::cout << "Applying CORS middleware" << std::endl;
 			response.headers["Access-Control-Allow-Origin"] = '*';
+			response.headers["Access-Control-Allow-Headers"] = '*';
+			response.headers["Access-Control-Allow-Methods"] = '*';
+			return response;
+		}
+};
+
+template <typename Context>
+class DefaultFieldsMiddleware: public MiddlewareFunctor<Context> {
+	public: 
+		std::vector<string> origins;
+		responseModel wrapResponse(responseModel response) override {
+			std::cout << "Applying DF middleware" << std::endl;
+			if(!response.code) {
+				response.code = 200;
+			}
+			if(response.proto.length() == 0) {
+				response.proto = "HTTP/1.1";
+			}
+			if(response.status.length() == 0) {
+				response.status = "OK";
+			}
 			return response;
 		}
 };
@@ -726,9 +695,6 @@ handlerFunction<Context> test(handlerFunction<Context> &fn) {
 	};
 }
 
-
-
-
 template <typename Context>
 void Server<Context>::createEndpoint(
 		Method method, 
@@ -738,11 +704,17 @@ void Server<Context>::createEndpoint(
 {
 	string m = parseMethod(method);
 	std::cout << "initializing " << m << " endpoint for " << path << std::endl;
-	const handlerFunction<Context> fn = [=](requestModel r, Context c) {
-		// [0]->(...) doesnt work ;.;
-		return middleware[0]->operator()(handler, r, c);
-	};
-	endpoints[method][path] = fn;
+	handlerFunction<Context> finalFunction = handler;
+	
+	// ZADZIAŁAŁO OMG!!!!!
+	for(auto m: middleware) {
+		finalFunction = 
+			[=](requestModel r, Context c) mutable {
+				return m->operator()(finalFunction, r, c);
+		};
+	}
+
+	endpoints[method][path] = finalFunction;
  	preflight[path].push_back(method);
 }
 
