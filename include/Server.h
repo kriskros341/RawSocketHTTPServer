@@ -3,6 +3,7 @@
 
 #include <sys/stat.h>
 
+
 #include <functional>
 #include <string.h>
 #include <map>
@@ -19,7 +20,7 @@
 #include <sys/socket.h>
 
 #define BACKLOG 10 // how many pending connections queue will hold
-#define DEFAULT_PORT 8080 // the port users will be connecting to
+#define DEFAULT_PORT 80 // the port users will be connecting to
 #define IGNORE_CHAR '.'
 #define HTTP_BADREQUEST "HTTP/1.1 400 Bad Request\r\n\r\n <div>400 Bad Request</div>"
 #define HTTP_NOTFOUND "HTTP/1.1 404 Not Found\r\n\r\n <div>404 Not Found</div>"
@@ -128,7 +129,10 @@ class HandlerClass {
 
 //  a type that every endpoint function must imitate
 template <typename Context>
-using handlerFunction = std::function<responseModel(requestModel, Context)>;
+using handlerFunction = 
+	std::function<
+		responseModel(requestModel, Context)
+	>;
 
 
 //  a type that every endpoint object must imitate

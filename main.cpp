@@ -3,7 +3,9 @@
 #include <functional>
 #include "include/json.hpp"
 #include <iostream>
+#include <9/iostream>
 
+#include <string>
 
 using std::string;
 using std::map;
@@ -40,19 +42,6 @@ class database {
 };
 
 
-class ServerWithDB: public Server<database> {
-	public:
-		ServerWithDB(database &db) : 
-		Server<database>(db) {
-			std::cout 
-					<< "database " 
-					<< context.conn->dbname() 
-					<< " connected" 
-					<< std::endl;
-		};
-};
-
-
 responseModel getTasks(requestModel request, database db) {
 	responseModel response;
 	nlohmann::json jsonBody;
@@ -84,6 +73,19 @@ bool isAlright(string s) {
 	return true;
 }
 
+class ServerWithDB: public Server<database> {
+	public:
+		ServerWithDB(database &db) : 
+		Server<database>(db) {
+			std::cout 
+					<< "database " 
+					<< context.conn->dbname() 
+					<< " connected" 
+					<< std::endl;
+		};
+};
+
+
 
 responseModel deleteTask(requestModel request, database db) {
 	responseModel response;
@@ -100,6 +102,7 @@ responseModel createTask(requestModel request, database db) {
 	map<string, string> body = parseParams(request.body);
 	responseModel response;
 	nlohmann::json jsonBody;
+	
 	if(isAlright(body["id"]) && body["name"].length() != 0 && body["isdone"] == "false" || body["isdone"] == "true") {
 		pqxx::result res = db.query("INSERT INTO todo VALUES("+body["id"]+", \'"+body["name"]+"\', "+body["isdone"]+")");
 		return response;
@@ -149,8 +152,7 @@ class Teset: public HandlerClass<database> {
 		};
 };
 
-
-
+void endpoint(){};
 
 int main(int argc, char *argv[]) {
 	//cout << __cplusplus << endl; //14
@@ -162,8 +164,10 @@ int main(int argc, char *argv[]) {
 	auto DF = new DefaultFieldsMiddleware<database>();
 	s.middleware.push_back(DF);
 	
-	Teset c = Teset();
-	s.on("/test", c);
+	Teset EndpointObject = Teset();
+	s.on("/test", EndpointObject);
+	
+
 	s.serveDirectory("build");
 	s.on(Method::GET, "/gettasks", getTasks);
 	s.on(Method::DELETE, "/deltask", deleteTask);

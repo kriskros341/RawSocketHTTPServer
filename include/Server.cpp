@@ -132,10 +132,8 @@ void translatePath(string &path) {
 		return;
 	}
 	if(path == "/") {
-		if(exists("index.html")) {
-			path = "index.html";
-			return;
-		}
+		path = "index.html";
+		return;
 	}
 	if(path.at(0) == '/') {
 		path = path.substr(1);
@@ -290,39 +288,86 @@ bool isThereSuchFile(string &path, string &content) {
 
 
 void SocketServer::bindToLocalAddress() {
-	
 	//Tłumaczenie tla peasantów od pythona i typescripta jak ja
 	//Node == IP
 	//Null znaczy że tylko localhost może się połączyć. NAWET 127.0.0.1 i [::1] nie zadziałają
 	//Service == PORT
-	//hints == OPTIONS
+	//hints == opcje wyszukiwania socketa do bindowania
 	//servinfo == 
+	//https://www.ibm.com/docs/en/zos/2.1.0?topic=SSLTBW_2.1.0/com.ibm.zos.v2r1.halc001/ipciccla_getaddrinfo_parm.htm
 	int addrinfoStatus;
-	if((addrinfoStatus = getaddrinfo("0.0.0.0", std::to_string(port).c_str(), &hints, &servinfo)) != 0) {
+	/*
+	 *	create a linked list of avaliable sockets, their parameters specified by hints structure
+	 * */
+	if((addrinfoStatus = getaddrinfo(
+					"0.0.0.0", 
+					std::to_string(port).c_str(), 
+					&hints, &servinfo)) != 0) 
+	{
 		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(addrinfoStatus)); 
 	}
-	for(p = servinfo; p != NULL; p = p->ai_next) {
-		if((serverSocketFileDescriptor = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
-			perror("server: socket");
-			continue;
-		}
-		//set socket options: should reuse: 1 (yes)
-		if(setsockopt(serverSocketFileDescriptor, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
-			perror("setsockopt");
-			exit(1);
-		}
-		if(bind(serverSocketFileDescriptor, p->ai_addr, p->ai_addrlen) == -1) {
-			close(serverSocketFileDescriptor);
-			perror("server: bind");
-			continue;
-		}
-		break;
+
+	//  if we had more than one address we'd create sockets in loop
+	//	for(p = servinfo; p != NULL; p = p->ai_next) {
+	/*
+	 *	attach first socket from servinfo linked list to file descriptor,
+	 *	set appropriate address familty, type and protocol
+	 *
+	 *	creates socket file descriptor
+	 * */
+	if((serverSocketFileDescriptor = socket(
+				servinfo->ai_family, 
+				servinfo->ai_socktype, 
+				servinfo->ai_protocol)
+				) == -1) 
+	{
+		perror("server: socket");
 	}
+	/*
+	 *	Set socket options.
+	 *	SOL_SOCKET is the level of API we interact with.
+	 *  SO_RESUEADDR is the option
+	 *  next is the value
+	 *  next is the size of value
+	 *  (it's legacy af)
+	 * */
+	//set socket options: should reuse: 1 (yes)
+	if(setsockopt(
+				serverSocketFileDescriptor, 
+				SOL_SOCKET, 
+				SO_REUSEADDR, 
+				&yes, 
+				sizeof(int)
+				) == -1) 
+	{
+		perror("setsockopt");
+		close(serverSocketFileDescriptor);
+		exit(0);
+	}
+	/*
+	 *	Bind socket communication to socket file descriptor
+	 * */
+	if(bind(
+				serverSocketFileDescriptor, 
+				servinfo->ai_addr, 
+				servinfo->ai_addrlen
+				) == -1) 
+	{
+		perror("server: bind");
+		close(serverSocketFileDescriptor);
+		exit(0);
+	}
+	/*
+	 *	delete structure. we don't need it anymore
+	 * */
 	freeaddrinfo(servinfo);
-	if (p == NULL) {
+	if (servinfo == NULL) {
 		perror("listen");
 		exit(1);
 	}
+	/*
+	 *	start listening to connections
+	 * */
 	if (listen(serverSocketFileDescriptor, BACKLOG) == -1) {
 		perror("listen");
 		exit(-1);
@@ -347,10 +392,27 @@ int SocketServer::mainLoop() {
 	};
 	while(true) {
 		sin_size = sizeof their_addr;
+		/* block server until connection arrives */
 		foreignSocketFileDescriptor = accept(serverSocketFileDescriptor, (struct sockaddr *)&their_addr, &sin_size);
 		//if(!fork()) {
 		std::thread worker( [&]() {
+			std::string incomingData;
+			char buff[8096]{};
+			int bytesRead{};
+			if(foreignSocketFileDescriptor == -1) {
+				perror("accept");
+				return;
+			}
+			inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr *) &their_addr), s, sizeof s);
+			printf("server: got connection from %s\n", s);
+			if((bytesRead = read(foreignSocketFileDescriptor, buff, 8096)) > 0) {
+				if(bytesRead == -1) {
+					perror("read");
+				}
+				incomingData += buff;
 			//do_stuff()
+			}
+			handleIncomingData(incomingData);
 		});
 		worker.join();
 		//}
@@ -412,7 +474,6 @@ void Server<Context>::serveDirectory(string path) {
 					) {
 					// ignorujemy . i .. obecne w każdym folderze
 					// strcmp cuz compiler complains about === 
-					// Given path leads to a directory. let the fun begin ^^
 					serveDirectory(path+"/"+entry->d_name, initial);
 				}
 			}
@@ -626,26 +687,32 @@ void Server<Context>::on(
 //  gosh
 template<typename Context>
 template<typename Type>
-void Server<Context>::on(pathString path, Type h) {
+void Server<Context>::on(pathString path, Type EndpointObject) {
 	if(std::is_base_of<HandlerClass<Context>, Type>()) {
 		using namespace std::placeholders;
 
 		handlerFunction<Context> getHandler = 
-			[&](requestModel r, Context c){
-					return h.get(r, c);
+			[&EndpointObject](requestModel r, Context c){
+					return EndpointObject.get(r, c);
 				};
 		on(Method::GET, path, getHandler);
 		
 		handlerFunction<Context> postHandler = 
-			std::bind(&Type::post, &h, _1, _2);
+			[&EndpointObject](requestModel r, Context c){
+					return EndpointObject.post(r, c);
+				};
 		on(Method::POST, path, postHandler);
 		
 		handlerFunction<Context> putHandler = 
-			std::bind(&Type::put, &h, _1, _2);
+			[&EndpointObject](requestModel r, Context c){
+					return EndpointObject.put(r, c);
+				};
 		on(Method::PUT, path, putHandler);
 		
 		handlerFunction<Context> delHandler = 
-			std::bind(&Type::del, &h, _1, _2);
+			[&EndpointObject](requestModel r, Context c){
+					return EndpointObject.del(r, c);
+				};
 		on(Method::DELETE, path, delHandler);
 	} else {
 		std::cout << "Given type does not extend ClassHandler<>!" << std::endl;
@@ -671,17 +738,20 @@ class CORSMiddleware: public MiddlewareFunctor<Context> {
 template <typename Context>
 class DefaultFieldsMiddleware: public MiddlewareFunctor<Context> {
 	public: 
+		int default_code = 200;
+		string default_status = "OK";
+		string default_proto = "HTTP/1.1";
 		std::vector<string> origins;
 		responseModel wrapResponse(responseModel response) override {
 			std::cout << "Applying DF middleware" << std::endl;
 			if(!response.code) {
-				response.code = 200;
+				response.code = default_code;
 			}
 			if(response.proto.length() == 0) {
-				response.proto = "HTTP/1.1";
+				response.proto = default_proto;
 			}
 			if(response.status.length() == 0) {
-				response.status = "OK";
+				response.status = default_status;
 			}
 			return response;
 		}

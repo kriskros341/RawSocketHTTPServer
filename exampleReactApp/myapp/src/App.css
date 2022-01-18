@@ -1,0 +1,18 @@
+.container {
+	padding: 8px;
+}
+.pad-bot {
+	margin-bottom: 8px;
+}
+.pad-right {
+	margin-right: 8px;
+}
+.add {
+	max-width: 400px;
+}
+.center {
+	margin-top: 0.5rem;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+}
