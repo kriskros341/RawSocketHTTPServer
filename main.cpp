@@ -3,7 +3,6 @@
 #include <functional>
 #include "include/json.hpp"
 #include <iostream>
-#include <9/iostream>
 
 #include <string>
 
@@ -75,8 +74,8 @@ bool isAlright(string s) {
 
 class ServerWithDB: public Server<database> {
 	public:
-		ServerWithDB(database &db) : 
-		Server<database>(db) {
+		ServerWithDB(int s_port, database &db) : 
+		Server<database>(s_port, db) {
 			std::cout 
 					<< "database " 
 					<< context.conn->dbname() 
@@ -157,7 +156,7 @@ void endpoint(){};
 int main(int argc, char *argv[]) {
 	//cout << __cplusplus << endl; //14
 	database* db = new database();
-	ServerWithDB s(*db);
+	ServerWithDB s(8080, *db);
 	
 	auto CORS = new CORSMiddleware<database>();
 	s.middleware.push_back(CORS);
@@ -173,6 +172,7 @@ int main(int argc, char *argv[]) {
 	s.on(Method::DELETE, "/deltask", deleteTask);
 	s.on(Method::POST, "/createtask", createTask);
 	s.on(Method::PUT, "/updatetask", updateTask);
+	std::cout << s.port << std::endl;
 	s.mainLoop();
 	
 	return 0;

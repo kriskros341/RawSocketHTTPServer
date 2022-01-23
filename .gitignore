@@ -1,2 +1,6 @@
-exeutable
+executable
 build/*
+exampleReactApp/node_modules
+howToFixCcls.txt
+.ccls
+

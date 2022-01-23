@@ -105,10 +105,13 @@ class SocketServer {
 	
 	public:
 		//  Service on which server will listen
-		int port = DEFAULT_PORT;
+		int port;
+		void setPort(int nbr);
+		int getPort();
 		//  Override it for actual implementation
 		virtual void handleIncomingData(std::string incomingData) {};
 		//  even more setup
+		void setup(int port);
 		void setup();
 		//  data sending, receiving and subprocess creation
 		int mainLoop();
@@ -220,6 +223,10 @@ class Server: public SocketServer {
 				MiddlewareFunctor<Context>*
 			> middleware;
 		
+		Server<Context>(int port, Context &External) {
+			setup(port);
+			context = External;
+		}
 		Server<Context>(Context &External) {
 			setup();
 			context = External;

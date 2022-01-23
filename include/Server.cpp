@@ -374,18 +374,36 @@ void SocketServer::bindToLocalAddress() {
 	}
 }
 
+void SocketServer::setup(int s_port) {
+	port = s_port;
+	setup();
+}
 
 void SocketServer::setup() {
 	hints.ai_family = AF_UNSPEC; //Accept both IPV4 and IPV6
 	hints.ai_socktype = SOCK_STREAM; //Accept TCP
 	hints.ai_flags = AI_PASSIVE;  //Do not initiate connection.
 	memset(&hints, 0, sizeof hints);
+	if(!port) {
+		port = DEFAULT_PORT;
+	}
 	bindToLocalAddress();
 	printf("server: waiting for connections to %d...\n", port);
 };
 
+void SocketServer::setPort(int nbr) {
+	port = nbr;
+}
+
+int SocketServer::getPort() {
+	return port;
+}
+
 
 int SocketServer::mainLoop() {
+	if(!port) {
+		port = DEFAULT_PORT;
+	}
 	if(listen(serverSocketFileDescriptor, foreignSocketFileDescriptor) == -1) {
 		perror("listen");
 		exit(1);
