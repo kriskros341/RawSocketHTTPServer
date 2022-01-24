@@ -20,7 +20,7 @@ Every time you see <> the template that matches one defined on server should be 
 
 Endpoints are added to the server by .on() method. They are then saved in a Map that associates them with path and method.
 
-The middleware is a set of decorators. Middleware obiects must extend MiddlewareFunctor<> obiect.
+The middleware is a set of decorators. Middleware objects must extend MiddlewareFunctor<> obiect.
 
 ## How did I do this
 
