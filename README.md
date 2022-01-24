@@ -6,7 +6,7 @@ This is my final project for first semester. School documentation is in "dokumen
 
 The library gives access to a Server class that takes care of all the communication asynchronously. It doesn't require user to know anything about networking, while also providing near total control. 
 
-It's simplistic, unopinionated API is inspired by tools I use, like Tornado (class handlers), NodeJS HTTP module and FastAPI (very simple function handlers, middleware model).
+Its simplistic, unopinionated API is inspired by tools I use, like Tornado (class handlers), NodeJS HTTP module and FastAPI (very simple function handlers, middleware model).
 
 Provided demo serves as a template for implementing own endpoints. It uses PostgreSQL, but can be adjusted to any database, whether SQL or NoSQL. The server is totally db-agnostic.
 
@@ -49,4 +49,5 @@ The demo requires a PostgreSQL database with schema that can be infered from get
 When listening on port bellow 1000, running as administrator is required.
 
 ## License: 
+
 lol. lmao.
